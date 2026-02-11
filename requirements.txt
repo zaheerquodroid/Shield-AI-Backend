@@ -1,0 +1,13 @@
+# Shield AI Backend Requirements
+
+# Core dependencies
+PyYAML>=6.0
+pathlib>=1.0.1
+
+# CLI
+argparse>=1.4.0
+
+# Optional: For future enhancements
+# requests>=2.31.0  # For Jira integration
+# python-dotenv>=1.0.0  # For .env file handling
+# colorama>=0.4.6  # For colored terminal output
