@@ -12,7 +12,8 @@ A security vulnerability remediation tool that automatically detects and fixes s
 
 ## Current Patterns
 
-- **CSEC-18**: Hardcoded SECRET_KEY with fallback detection and remediation
+- **CSEC-18**: Hardcoded SECRET_KEY with fallback detection and remediation (phased fix)
+- **CSEC-19**: DEBUG defaults to True detection and remediation (immediate fix)
 
 ## Installation
 

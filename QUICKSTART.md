@@ -23,6 +23,9 @@ python -m shield_ai scan /path/to/coco-testai
 # Scan for specific pattern (CSEC-18)
 python -m shield_ai scan /path/to/coco-testai --pattern csec_18_hardcoded_secret
 
+# Scan for CSEC-19 (DEBUG defaults to True)
+python -m shield_ai scan /path/to/coco-testai --pattern csec_19_debug_default_true
+
 # Save findings to JSON
 python -m shield_ai scan /path/to/coco-testai --output findings.json
 ```
@@ -132,6 +135,88 @@ python -m shield_ai fix ../coco-testai --pattern csec_18_hardcoded_secret --phas
 python -m shield_ai fix ../coco-testai --pattern csec_18_hardcoded_secret --phase enforcement --framework django
 ```
 
+## Workflow for CSEC-19 (DEBUG Defaults to True)
+
+### Step 1: Scan
+```bash
+python -m shield_ai scan ../coco-testai --pattern csec_19_debug_default_true
+```
+
+**Expected output:**
+```
+🔍 Scanning ../coco-testai...
+
+  ⚠️  Found 1 issues for csec_19_debug_default_true
+
+1. DEBUG Defaults to True (csec_19_debug_default_true)
+   File: ../coco-testai/coco_backend/settings.py:39
+   Severity: CRITICAL
+   Code: DEBUG = os.environ.get('DEBUG', 'True')...
+   Env Var: DEBUG
+```
+
+### Step 2: Preview Fixes
+```bash
+python -m shield_ai fix ../coco-testai --pattern csec_19_debug_default_true --dry-run
+```
+
+### Step 3: Apply Fix (Single Phase - Immediate)
+
+⚠️ **CSEC-19 is simpler than CSEC-18 - single phase, no migration needed!**
+
+```bash
+# Apply the fix immediately (safe, non-breaking)
+python -m shield_ai fix ../coco-testai --pattern csec_19_debug_default_true --framework django
+```
+
+**What happens:**
+```python
+# BEFORE:
+DEBUG = os.environ.get('DEBUG', 'True')  # INSECURE!
+
+# AFTER:
+DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 'yes')  # SECURE!
+```
+
+**Files modified:**
+- `coco_backend/settings.py` - DEBUG defaults to False
+- `.env.dev.example` - Created with DEBUG=True for development
+- `.env.prod.example` - Created with DEBUG=False for production
+- `SECURITY_UPDATES.md` - Documentation
+- `coco_backend/settings.py.shield_ai_backup` - Backup
+
+### Step 4: Test Immediately
+
+```bash
+cd /path/to/coco-testai
+
+# Test without DEBUG env var (should default to False - secure!)
+python manage.py check
+# App starts with DEBUG=False ✓
+
+# Test with DEBUG=True (development)
+export DEBUG=True
+python manage.py check
+# App starts with DEBUG=True ✓
+
+# Test with DEBUG=False (production)
+export DEBUG=False
+python manage.py check
+# App starts with DEBUG=False ✓
+```
+
+### Why CSEC-19 is Simpler
+
+| Aspect | CSEC-18 | CSEC-19 |
+|--------|---------|---------|
+| **Phases** | 2 (warning → enforcement) | 1 (immediate fix) |
+| **Migration period** | 30 days | None |
+| **Breaking change** | Yes (Phase 2) | No |
+| **Default behavior** | Fail if missing | False if missing |
+| **Deployment** | Staged rollout | Immediate |
+
+---
+
 ## File Structure After Running Shield AI
 
 ```
@@ -169,4 +254,6 @@ python manage.py check  # Should raise ImproperlyConfigured
 
 For issues or questions:
 - GitHub: https://github.com/zaheerquodroid/Shield-AI-Backend
-- Jira: CSEC-18 (Coco TestAI Security Remediation)
+- Jira:
+  - CSEC-18 (Hardcoded SECRET_KEY)
+  - CSEC-19 (DEBUG defaults to True)
