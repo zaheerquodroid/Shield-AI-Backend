@@ -1,0 +1,500 @@
+{
+  "bare_except_findings": [
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 15,
+      "matched_code": "    except:  # CSEC-23: Should detect and suggest json.JSONDecodeError",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with only comment",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "json.JSONDecodeError",
+          "confidence": "high",
+          "reason": "Detected json_operations in try block",
+          "try_block_content": "        data = json.loads(content)\n        print(data)",
+          "context_type": "json_operations"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 25,
+      "matched_code": "    except:  # CSEC-23: Should detect and suggest (IOError, FileNotFoundError)",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with only comment",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "(IOError, FileNotFoundError)",
+          "confidence": "high",
+          "reason": "Detected file_operations in try block",
+          "try_block_content": "        with open('/path/to/file.txt', 'r') as f:\n            content = f.read()",
+          "context_type": "file_operations"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 35,
+      "matched_code": "    except:  # CSEC-23: Should detect and suggest (ValueError, TypeError)",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with only comment",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "(ValueError, TypeError)",
+          "confidence": "high",
+          "reason": "Detected type_conversions in try block",
+          "try_block_content": "        number = int(value)",
+          "context_type": "type_conversions"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 45,
+      "matched_code": "    except:  # CSEC-23: Should detect and suggest KeyError",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with only comment",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "KeyError",
+          "confidence": "medium",
+          "reason": "Detected dict_access in try block",
+          "try_block_content": "        value = data[\"missing_key\"]",
+          "context_type": "dict_access"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 57,
+      "matched_code": "    except:  # CSEC-23: Should detect json.JSONDecodeError (first match)",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with only comment",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "json.JSONDecodeError",
+          "confidence": "high",
+          "reason": "Detected json_operations in try block",
+          "try_block_content": "        content = '{\"test\": \"data\"}'\n        data = json.loads(content)  # JSON operation first\n        with open('file.txt', 'w') as f:  # File operation second\n            f.write(str(data))",
+          "context_type": "json_operations"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 74,
+      "matched_code": "    except:  # CSEC-23: Should suggest Exception (generic)",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with only comment",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "Exception",
+          "confidence": "low",
+          "reason": "No specific operation pattern detected",
+          "try_block_content": "        x = 1 + 2\n        y = x * 3\n        result = process(y)",
+          "context_type": "generic"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 85,
+      "matched_code": "    except:  # CSEC-23: Should detect and suggest requests.RequestException",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with only comment",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "requests.RequestException",
+          "confidence": "high",
+          "reason": "Detected http_requests in try block",
+          "try_block_content": "        response = requests.get('https://api.example.com/data')\n        data = response.json()",
+          "context_type": "http_requests"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_23_bare_except",
+      "pattern_name": "Bare Except Clauses",
+      "file": "tests\\test_sample_bare_except.py",
+      "line": 65,
+      "matched_code": "    except: pass  # CSEC-23: Should detect",
+      "language": "python",
+      "severity": "medium",
+      "category": "error_handling",
+      "description": "Bare except with pass",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {
+          "suggested_exception": "Exception",
+          "confidence": "low",
+          "reason": "No specific operation pattern detected",
+          "try_block_content": "        risky_operation()",
+          "context_type": "generic"
+        }
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "context_aware_replacement",
+        "breaking_change": "potentially",
+        "description": "Replace bare except with specific exception types based on context analysis.\nThe scanner analyzes the try block to suggest appropriate exception types.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for bare except clauses and analyze context"
+          },
+          {
+            "name": "suggestion",
+            "duration_days": 0,
+            "description": "Suggest specific exception types based on code context"
+          },
+          {
+            "name": "user_review",
+            "duration_days": "variable",
+            "description": "User reviews and approves suggested fixes"
+          },
+          {
+            "name": "application",
+            "duration_days": 0,
+            "description": "Apply approved fixes with testing"
+          }
+        ]
+      }
+    }
+  ],
+  "drf_handler_findings": [
+    {
+      "pattern_id": "csec_23_drf_exception_handler",
+      "pattern_name": "Missing DRF Custom Exception Handler",
+      "file": "tests\\test_sample_drf_settings.py",
+      "line": 54,
+      "matched_code": "REST_FRAMEWORK = {",
+      "language": "python",
+      "severity": "high",
+      "category": "error_handling",
+      "description": "REST_FRAMEWORK configuration found",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-23",
+        "epic": "CSEC-2",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "create_handler_and_configure",
+        "breaking_change": false,
+        "description": "Create a custom exception handler that sanitizes all unhandled exceptions\nwhile maintaining compatibility with existing DRF error handling.\n",
+        "phases": [
+          {
+            "name": "detection",
+            "duration_days": 0,
+            "description": "Scan for DRF projects without custom exception handler"
+          },
+          {
+            "name": "handler_creation",
+            "duration_days": 0,
+            "description": "Create custom exception handler file"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Update settings to use custom handler"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with various exception types"
+          }
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "bare_except_count": 8,
+    "drf_handler_count": 1,
+    "total_count": 9
+  }
+}

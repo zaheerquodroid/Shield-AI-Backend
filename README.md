@@ -12,8 +12,8 @@ A security vulnerability remediation tool that automatically detects and fixes s
 
 ## Current Patterns
 
-- **CSEC-18**: Hardcoded SECRET_KEY with fallback detection and remediation (phased fix)
-- **CSEC-19**: DEBUG defaults to True detection and remediation (immediate fix)
+- **CSEC-22**: Unsanitized WebSocket error messages - prevents information disclosure (wrapper fix)
+- **CSEC-23**: Bare except clauses and missing DRF exception handler - prevents information disclosure and improves error handling (context-aware fix)
 
 ## Installation
 

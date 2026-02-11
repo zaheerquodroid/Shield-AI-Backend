@@ -37,9 +37,9 @@ class SecurityScanner:
                 with open(yaml_file, 'r', encoding='utf-8') as f:
                     pattern = yaml.safe_load(f)
                     patterns.append(pattern)
-                    print(f"✓ Loaded pattern: {pattern.get('pattern_id', yaml_file.name)}")
+                    print(f"[OK] Loaded pattern: {pattern.get('pattern_id', yaml_file.name)}")
             except Exception as e:
-                print(f"✗ Error loading {yaml_file}: {e}")
+                print(f"[ERROR] Error loading {yaml_file}: {e}")
 
         return patterns
 
@@ -66,15 +66,15 @@ class SecurityScanner:
             if not patterns_to_scan:
                 raise ValueError(f"Pattern not found: {pattern_id}")
 
-        print(f"\n🔍 Scanning {repo_path}...")
-        print(f"📋 Patterns to check: {len(patterns_to_scan)}\n")
+        print(f"\nScanning {repo_path}...")
+        print(f"Patterns to check: {len(patterns_to_scan)}\n")
 
         for pattern in patterns_to_scan:
             pattern_findings = self.scan_pattern(repo_path, pattern)
             findings.extend(pattern_findings)
 
             if pattern_findings:
-                print(f"  ⚠️  Found {len(pattern_findings)} issues for {pattern['pattern_id']}")
+                print(f"  [!] Found {len(pattern_findings)} issues for {pattern['pattern_id']}")
 
         return findings
 
@@ -111,7 +111,7 @@ class SecurityScanner:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
         except Exception as e:
-            print(f"  ⚠️  Could not read {file_path}: {e}")
+            print(f"  [!] Could not read {file_path}: {e}")
             return findings
 
         # Detect language
@@ -155,8 +155,14 @@ class SecurityScanner:
         # Extract metadata from match groups
         groups = match.groups()
         variable_name = groups[0] if len(groups) > 0 else "UNKNOWN"
-        env_var_name = groups[1] if len(groups) > 1 else variable_name
+        # For env_var_name, use groups[1] if it exists and is not None/empty, else use variable_name
+        env_var_name = groups[1] if (len(groups) > 1 and groups[1]) else variable_name
         fallback_value = groups[2] if len(groups) > 2 else "'default'"
+
+        # Context-aware analysis for bare except patterns (CSEC-23)
+        context_analysis = {}
+        if detection_pattern.get('context_aware', False):
+            context_analysis = self.analyze_exception_context(content, match.start())
 
         return {
             'pattern_id': pattern['pattern_id'],
@@ -171,7 +177,8 @@ class SecurityScanner:
             'metadata': {
                 'variable_name': variable_name,
                 'env_var_name': env_var_name,
-                'original_fallback': fallback_value
+                'original_fallback': fallback_value,
+                'context_analysis': context_analysis
             },
             'jira_reference': pattern.get('jira_reference', {}),
             'fix_strategy': pattern.get('fix_strategy', {})
@@ -189,3 +196,121 @@ class SecurityScanner:
             context.append(f"{prefix}{i+1:4d} | {lines[i]}")
 
         return '\n'.join(context)
+
+    def analyze_exception_context(self, content: str, except_position: int) -> Dict[str, Any]:
+        """
+        Analyze the context around a bare except clause to suggest appropriate exception type.
+        This is used for CSEC-23 bare except pattern detection.
+
+        Args:
+            content: Full file content
+            except_position: Position of the except statement in content
+
+        Returns:
+            Dict with suggested_exception, confidence, and try_block_content
+        """
+        # Find the try block that this except belongs to
+        try_block = self.extract_try_block(content, except_position)
+
+        if not try_block:
+            return {
+                'suggested_exception': 'Exception',
+                'confidence': 'low',
+                'reason': 'Could not extract try block for analysis',
+                'try_block_content': ''
+            }
+
+        # Context patterns to detect
+        context_patterns = {
+            'json_operations': {
+                'patterns': [r'json\.loads', r'json\.load', r'json\.dumps', r'json\.dump'],
+                'exception': 'json.JSONDecodeError',
+                'confidence': 'high'
+            },
+            'file_operations': {
+                'patterns': [r'open\(', r'\.read\(', r'\.write\(', r'Path\('],
+                'exception': '(IOError, FileNotFoundError)',
+                'confidence': 'high'
+            },
+            'database_operations': {
+                'patterns': [r'\.execute\(', r'\.fetch', r'cursor\.', r'connection\.'],
+                'exception': 'DatabaseError',
+                'confidence': 'medium'
+            },
+            'http_requests': {
+                'patterns': [r'requests\.', r'urllib\.', r'http\.'],
+                'exception': 'requests.RequestException',
+                'confidence': 'high'
+            },
+            'type_conversions': {
+                'patterns': [r'\bint\(', r'\bfloat\(', r'\bstr\('],
+                'exception': '(ValueError, TypeError)',
+                'confidence': 'high'
+            },
+            'dict_access': {
+                'patterns': [r'\[[\'\"]', r'\.get\('],
+                'exception': 'KeyError',
+                'confidence': 'medium'
+            },
+        }
+
+        # Check which patterns match
+        for context_name, context_info in context_patterns.items():
+            for pattern in context_info['patterns']:
+                if re.search(pattern, try_block):
+                    return {
+                        'suggested_exception': context_info['exception'],
+                        'confidence': context_info['confidence'],
+                        'reason': f'Detected {context_name} in try block',
+                        'try_block_content': try_block,
+                        'context_type': context_name
+                    }
+
+        # No specific pattern found
+        return {
+            'suggested_exception': 'Exception',
+            'confidence': 'low',
+            'reason': 'No specific operation pattern detected',
+            'try_block_content': try_block,
+            'context_type': 'generic'
+        }
+
+    def extract_try_block(self, content: str, except_position: int) -> str:
+        """
+        Extract the try block content before an except statement.
+
+        Args:
+            content: Full file content
+            except_position: Position of the except statement
+
+        Returns:
+            str: Content of the try block, or empty string if not found
+        """
+        # Find the line of the except statement
+        lines_before = content[:except_position].split('\n')
+        except_line_num = len(lines_before) - 1
+
+        # Work backwards to find the matching try statement
+        lines = content.split('\n')
+        try_line_num = -1
+
+        # Simple indentation-based search (works for most Python code)
+        except_indent = len(lines[except_line_num]) - len(lines[except_line_num].lstrip())
+
+        for i in range(except_line_num - 1, max(0, except_line_num - 50), -1):
+            line = lines[i]
+            stripped = line.strip()
+
+            if stripped.startswith('try:'):
+                # Check if indentation matches
+                try_indent = len(line) - len(line.lstrip())
+                if try_indent == except_indent:
+                    try_line_num = i
+                    break
+
+        if try_line_num == -1:
+            return ""
+
+        # Extract content between try and except
+        try_block_lines = lines[try_line_num + 1:except_line_num]
+        return '\n'.join(try_block_lines)

@@ -1,0 +1,158 @@
+pattern_id: csec_23_bare_except
+name: "Bare Except Clauses"
+category: error_handling
+severity: medium
+description: |
+  Detects bare except clauses (except:) that catch all exceptions without
+  specifying the exception type. This is a security and code quality issue:
+  - Catches system exceptions (KeyboardInterrupt, SystemExit)
+  - Hides programming errors
+  - Makes debugging difficult
+  - Can mask security issues
+
+  Best practice: Always specify the exception type you're catching.
+
+jira_reference:
+  ticket: CSEC-23
+  epic: CSEC-2
+  project: "Coco TestAI Security Remediation"
+
+detection:
+  # Python patterns for bare except clauses
+  python:
+    - pattern: '^\s*except\s*:\s*$'
+      description: "Bare except clause without exception type"
+      example: "except:"
+      context_aware: true
+
+    - pattern: '^\s*except\s*:\s*#.*$'
+      description: "Bare except with only comment"
+      example: "except: # ignore errors"
+      context_aware: true
+
+    - pattern: '^\s*except\s*:\s*pass\s*(?:#.*)?$'
+      description: "Bare except with pass"
+      example: "except: pass"
+      context_aware: true
+
+file_patterns:
+  - "**/*.py"
+
+risk_assessment:
+  impact: medium
+  exploitability: low
+  affected_scope: error_handling
+  labels:
+    - P0-Critical
+    - security
+    - backend
+    - extension-launch
+    - code-quality
+
+  risks:
+    - "Catches KeyboardInterrupt and SystemExit unexpectedly"
+    - "Hides bugs and makes debugging difficult"
+    - "May mask security exceptions"
+    - "Violates Python best practices (PEP 8)"
+    - "Can catch MemoryError and other system-level errors"
+
+fix_strategy:
+  approach: context_aware_replacement
+  breaking_change: potentially
+  description: |
+    Replace bare except with specific exception types based on context analysis.
+    The scanner analyzes the try block to suggest appropriate exception types.
+
+  phases:
+    - name: detection
+      duration_days: 0
+      description: "Scan for bare except clauses and analyze context"
+
+    - name: suggestion
+      duration_days: 0
+      description: "Suggest specific exception types based on code context"
+
+    - name: user_review
+      duration_days: variable
+      description: "User reviews and approves suggested fixes"
+
+    - name: application
+      duration_days: 0
+      description: "Apply approved fixes with testing"
+
+context_analysis:
+  # Patterns to detect context and suggest appropriate exceptions
+  suggestions:
+    json_operations:
+      patterns:
+        - "json.loads"
+        - "json.load"
+        - "json.dumps"
+        - "json.dump"
+      exception: "json.JSONDecodeError"
+
+    file_operations:
+      patterns:
+        - "open("
+        - "file.read"
+        - "file.write"
+        - "Path("
+      exception: "IOError, FileNotFoundError"
+
+    database_operations:
+      patterns:
+        - ".execute("
+        - ".fetch"
+        - "cursor."
+        - "connection."
+      exception: "DatabaseError"
+
+    http_requests:
+      patterns:
+        - "requests."
+        - "urllib."
+        - "http."
+      exception: "RequestException"
+
+    type_conversions:
+      patterns:
+        - "int("
+        - "float("
+        - "str("
+      exception: "ValueError, TypeError"
+
+    dict_access:
+      patterns:
+        - "dict["
+        - ".get("
+      exception: "KeyError"
+
+    generic:
+      patterns: []
+      exception: "Exception"
+      comment: "# Consider specifying more specific exception types"
+
+acceptance_criteria:
+  - "All bare except clauses are detected"
+  - "Context-aware exception suggestions are provided"
+  - "User can review and approve suggested exception types"
+  - "Fixed code maintains original error handling logic"
+  - "Test coverage includes various context scenarios"
+
+estimated_effort:
+  detection: "10 minutes"
+  context_analysis: "20 minutes"
+  fix_application: "30 minutes per codebase"
+  testing: "1 hour"
+  total: "2 hours per codebase"
+
+notes: |
+  Unlike simpler fixes (CSEC-18, CSEC-19), bare except replacement requires
+  careful analysis because:
+  - Different contexts need different exception types
+  - May change program behavior (previously caught system exceptions)
+  - Requires user review to ensure correctness
+  - Testing is critical to verify error paths still work
+
+  The context-aware approach helps but doesn't eliminate the need for
+  human review and testing.
