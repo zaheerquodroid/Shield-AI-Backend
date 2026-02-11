@@ -14,6 +14,9 @@ A security vulnerability remediation tool that automatically detects and fixes s
 
 - **CSEC-22**: Unsanitized WebSocket error messages - prevents information disclosure (wrapper fix)
 - **CSEC-23**: Bare except clauses and missing DRF exception handler - prevents information disclosure and improves error handling (context-aware fix)
+- **CSEC-26**: Missing DRF rate limiting configuration - prevents brute force attacks and API abuse (phased rollout fix)
+- **CSEC-27**: Missing breached password validation - prevents credential stuffing attacks (configuration addition)
+- **CSEC-28**: Missing or insecure Django security headers - prevents clickjacking, MIME sniffing, protocol downgrade attacks (configuration addition)
 
 ## Installation
 
