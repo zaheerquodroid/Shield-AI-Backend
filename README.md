@@ -6,7 +6,7 @@ A security vulnerability remediation tool that automatically detects and fixes s
 
 - Pattern-based vulnerability detection
 - Non-breaking phased fixes
-- Multi-language support (Python, JavaScript, Java, C#)
+- Python support (Django, Flask, FastAPI)
 - Jira integration for tracking
 - Compliance monitoring
 

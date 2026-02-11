@@ -138,22 +138,13 @@ class SecurityScanner:
         return findings
 
     def detect_language(self, file_path: Path) -> str:
-        """Detect programming language from file extension"""
+        """Detect programming language from file extension (Python only for CSEC-18)"""
         ext = file_path.suffix.lower()
 
-        language_map = {
-            '.py': 'python',
-            '.js': 'javascript',
-            '.ts': 'typescript',
-            '.java': 'java',
-            '.cs': 'csharp',
-            '.yml': 'yaml',
-            '.yaml': 'yaml',
-            '.json': 'json',
-            '.properties': 'properties'
-        }
+        if ext == '.py':
+            return 'python'
 
-        return language_map.get(ext, 'unknown')
+        return 'unknown'
 
     def create_finding(self, file_path: Path, pattern: Dict[str, Any],
                       match: re.Match, content: str, language: str,
