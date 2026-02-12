@@ -1,63 +1,84 @@
-# Shield AI Backend
+# ShieldAI Security Proxy
 
-A security vulnerability remediation tool that automatically detects and fixes security issues in codebases with minimal breaking changes.
+A generic reverse proxy that wraps any web application with security middleware — WAF, session validation, error sanitization, audit logging, and more — without modifying the upstream app.
+
+## Architecture
+
+```
+Client → ALB → ShieldAI Proxy → Upstream App
+                  │
+          ┌───────┴────────┐
+          │  Middleware     │
+          │  Pipeline       │
+          │                 │
+          │  1. Router      │
+          │  2. Context     │
+          │  3. Session     │
+          │  4. Sanitizer   │
+          │  5. Audit       │
+          └─────────────────┘
+```
 
 ## Features
 
-- Pattern-based vulnerability detection
-- Non-breaking phased fixes
-- Python support (Django, Flask, FastAPI)
-- Jira integration for tracking
-- Compliance monitoring
+- **Reverse Proxy** — Transparent forwarding of all HTTP methods, headers, and streaming responses
+- **Multi-Tenant** — Route by `Host` header to per-customer configuration
+- **Context Injection** — Add `X-Request-ID`, `X-Tenant-ID`, `X-User-ID` headers; strip spoofed headers
+- **Middleware Pipeline** — Ordered, configurable chain of request/response processors
+- **Config API** — CRUD endpoints for managing customers and apps
+- **Health Checks** — `/health` and `/ready` endpoints with dependency status
 
-## Current Patterns
+## Quick Start
 
-- **CSEC-22**: Unsanitized WebSocket error messages - prevents information disclosure (wrapper fix)
-- **CSEC-23**: Bare except clauses and missing DRF exception handler - prevents information disclosure and improves error handling (context-aware fix)
-- **CSEC-26**: Missing DRF rate limiting configuration - prevents brute force attacks and API abuse (phased rollout fix)
-- **CSEC-27**: Missing breached password validation - prevents credential stuffing attacks (configuration addition)
-- **CSEC-28**: Missing or insecure Django security headers - prevents clickjacking, MIME sniffing, protocol downgrade attacks (configuration addition)
-- **CSEC-29**: Missing Content-Security-Policy header - prevents XSS attacks (configuration addition)
-- **CSEC-30**: Missing Permissions-Policy header - prevents unauthorized browser feature access (middleware addition)
-- **CSEC-31**: Missing audit logging infrastructure - enables compliance and security incident tracking (feature addition)
-- **CSEC-32**: Missing structured JSON logging - enables log aggregation and security monitoring (configuration addition)
-- **CSEC-33**: Missing PostgreSQL Row-Level Security (RLS) - prevents cross-tenant data leaks (database-level isolation)
-- **CSEC-34**: Missing AWS Secrets Manager integration - centralized secret management with rotation and audit trail (wrapper utility)
-- **CSEC-35**: LLM prompt injection vulnerability - prevents manipulation of AI models via crafted inputs (wrapper utility)
-- **CSEC-36**: Missing static code analysis for AI-generated scripts - prevents code injection from LLMs (AST-based validation)
-
-## Installation
+### Local Development
 
 ```bash
-pip install -r requirements.txt
+# Start all services (proxy, Redis, PostgreSQL, mock upstream)
+docker compose -f docker/docker-compose.dev.yml up
+
+# Proxy is available at http://localhost:8080
+curl http://localhost:8080/health
+curl http://localhost:8080/anything
 ```
 
-## Usage
+### Run Tests
 
 ```bash
-# Scan a codebase
-python -m shield_ai scan /path/to/codebase
-
-# Apply fixes (Phase 1: Warning mode)
-python -m shield_ai fix /path/to/codebase --phase warning
-
-# Apply fixes (Phase 2: Enforcement mode)
-python -m shield_ai fix /path/to/codebase --phase enforcement
-
-# Generate report
-python -m shield_ai report /path/to/codebase --format markdown
+pip install -e ".[dev]"
+pytest tests/
 ```
 
 ## Project Structure
 
 ```
-shield_ai/
-├── core/              # Core scanning and fixing logic
-├── patterns/          # Vulnerability pattern definitions
-├── fix_templates/     # Language-specific fix templates
-├── utils/             # Utility functions
-└── integrations/      # Third-party integrations (Jira, etc.)
+proxy/                  # Application code
+  main.py               # FastAPI app + reverse proxy
+  config/               # YAML + env config, multi-tenant config service
+  middleware/            # Ordered middleware pipeline
+  models/               # Pydantic models + SQL schema
+  api/                  # Config CRUD + auth
+  store/                # Redis + PostgreSQL connections
+  health.py             # Health/readiness endpoints
+  logging_config.py     # structlog JSON logging
+
+terraform/              # AWS ECS Fargate infrastructure
+docker/                 # Dockerfile + docker-compose
+tests/                  # pytest test suite
 ```
+
+## Configuration
+
+Configuration is loaded from YAML defaults, overridden by environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROXY_UPSTREAM_URL` | `http://localhost:3000` | Default upstream app URL |
+| `PROXY_LISTEN_PORT` | `8080` | Proxy listen port |
+| `PROXY_REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
+| `PROXY_POSTGRES_URL` | `postgresql://...` | PostgreSQL connection URL |
+| `PROXY_LOG_LEVEL` | `info` | Log level |
+| `PROXY_CONFIG_FILE` | `proxy/config/defaults.yaml` | Config file path |
+| `PROXY_API_KEY` | (required) | API key for config endpoints |
 
 ## License
 

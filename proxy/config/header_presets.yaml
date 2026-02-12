@@ -1,0 +1,31 @@
+# ShieldAI Security Proxy — Security header presets
+# Three profiles: strict, balanced, permissive
+
+strict:
+  strict-transport-security: "max-age=63072000; includeSubDomains; preload"
+  content-security-policy: "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'"
+  x-frame-options: "DENY"
+  x-content-type-options: "nosniff"
+  referrer-policy: "no-referrer"
+  permissions-policy: "camera=(), microphone=(), geolocation=(), payment=()"
+  x-xss-protection: "1; mode=block"
+  cross-origin-opener-policy: "same-origin"
+  cross-origin-resource-policy: "same-origin"
+
+balanced:
+  strict-transport-security: "max-age=31536000; includeSubDomains"
+  content-security-policy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self' https:; frame-ancestors 'self'; form-action 'self'; base-uri 'self'; object-src 'none'"
+  x-frame-options: "SAMEORIGIN"
+  x-content-type-options: "nosniff"
+  referrer-policy: "strict-origin-when-cross-origin"
+  permissions-policy: "camera=(), microphone=(), geolocation=(self), payment=()"
+  x-xss-protection: "1; mode=block"
+
+permissive:
+  strict-transport-security: "max-age=31536000"
+  content-security-policy: "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src * data:; font-src * data:; connect-src *; frame-ancestors 'self' https:; form-action 'self' https:; base-uri 'self'; object-src 'none'"
+  x-frame-options: "SAMEORIGIN"
+  x-content-type-options: "nosniff"
+  referrer-policy: "strict-origin-when-cross-origin"
+  permissions-policy: "camera=(self), microphone=(self), geolocation=(self), payment=(self)"
+  x-xss-protection: "1; mode=block"

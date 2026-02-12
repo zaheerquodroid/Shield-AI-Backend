@@ -1,0 +1,98 @@
+services:
+  proxy:
+    build:
+      context: ../
+      dockerfile: docker/proxy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PROXY_UPSTREAM_URL: "http://mock-upstream:3000"
+      PROXY_REDIS_URL: "redis://redis:6379"
+      PROXY_POSTGRES_URL: "postgresql://shieldai:shieldai@postgres:5432/shieldai"
+      PROXY_LOG_LEVEL: "debug"
+      PROXY_LOG_JSON: "false"
+      PROXY_API_KEY: "dev-api-key-change-me"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mock-upstream:
+        condition: service_started
+    volumes:
+      - ../proxy:/app/proxy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: shieldai
+      POSTGRES_PASSWORD: shieldai
+      POSTGRES_DB: shieldai
+    volumes:
+      - ../proxy/models/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shieldai"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mock-upstream:
+    image: python:3.12-slim
+    command: >
+      python -c "
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      import json
+
+      class Handler(BaseHTTPRequestHandler):
+          def do_GET(self):
+              self.send_response(200)
+              self.send_header('Content-Type', 'application/json')
+              self.end_headers()
+              body = json.dumps({
+                  'path': self.path,
+                  'method': 'GET',
+                  'headers': dict(self.headers),
+                  'message': 'Hello from mock upstream'
+              })
+              self.wfile.write(body.encode())
+
+          def do_POST(self):
+              length = int(self.headers.get('Content-Length', 0))
+              body_in = self.rfile.read(length).decode() if length else ''
+              self.send_response(200)
+              self.send_header('Content-Type', 'application/json')
+              self.end_headers()
+              body = json.dumps({
+                  'path': self.path,
+                  'method': 'POST',
+                  'headers': dict(self.headers),
+                  'body': body_in,
+                  'message': 'Hello from mock upstream'
+              })
+              self.wfile.write(body.encode())
+
+          do_PUT = do_POST
+          do_PATCH = do_POST
+          do_DELETE = do_GET
+
+          def do_HEAD(self):
+              self.send_response(200)
+              self.end_headers()
+
+      HTTPServer(('0.0.0.0', 3000), Handler).serve_forever()
+      "
+    ports:
+      - "3000:3000"

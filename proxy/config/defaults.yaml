@@ -1,0 +1,29 @@
+# ShieldAI Security Proxy — default configuration
+upstream_url: "http://localhost:3000"
+listen_port: 8080
+redis_url: "redis://localhost:6379"
+postgres_url: "postgresql://shieldai:shieldai@localhost:5432/shieldai"
+log_level: "info"
+log_json: true
+config_file: "proxy/config/defaults.yaml"
+api_key: ""
+
+# Connection pool settings
+redis_pool_size: 10
+postgres_pool_min: 2
+postgres_pool_max: 10
+
+# Proxy settings
+proxy_timeout: 30.0
+shutdown_drain_seconds: 30
+
+# Customer config cache
+config_cache_ttl_seconds: 60
+
+# Rate limiting
+rate_limit_auth_max: 500
+rate_limit_global_max: 2000
+rate_limit_window_seconds: 300
+
+# Security headers
+header_preset: "balanced"
