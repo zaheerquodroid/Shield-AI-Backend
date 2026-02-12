@@ -283,11 +283,32 @@ class TestCustomerCRUDEdgeCases:
     """Error paths for customer CRUD."""
 
     def test_create_customer_db_unavailable(self, api_client):
-        """Returns 503 when DB returns None."""
-        with patch("proxy.api.config_routes.pg_store.create_customer", new_callable=AsyncMock, return_value=None):
+        """Returns 503 when DB raises StoreUnavailable."""
+        from proxy.store.postgres import StoreUnavailable
+
+        with patch(
+            "proxy.api.config_routes.pg_store.create_customer",
+            new_callable=AsyncMock,
+            side_effect=StoreUnavailable("no pool"),
+        ):
             resp = api_client.post(
                 "/api/config/customers/",
                 json={"name": "X", "api_key": "k"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 503
+
+    def test_get_customer_db_unavailable(self, api_client):
+        """Returns 503 when DB raises StoreUnavailable on get."""
+        from proxy.store.postgres import StoreUnavailable
+
+        with patch(
+            "proxy.api.config_routes.pg_store.get_customer",
+            new_callable=AsyncMock,
+            side_effect=StoreUnavailable("no pool"),
+        ):
+            resp = api_client.get(
+                f"/api/config/customers/{uuid4()}",
                 headers=_AUTH,
             )
         assert resp.status_code == 503
@@ -301,6 +322,51 @@ class TestCustomerCRUDEdgeCases:
                 headers=_AUTH,
             )
         assert resp.status_code == 404
+
+    def test_update_customer_db_unavailable(self, api_client):
+        """Returns 503 when DB raises StoreUnavailable on update."""
+        from proxy.store.postgres import StoreUnavailable
+
+        with patch(
+            "proxy.api.config_routes.pg_store.update_customer",
+            new_callable=AsyncMock,
+            side_effect=StoreUnavailable("no pool"),
+        ):
+            resp = api_client.put(
+                f"/api/config/customers/{uuid4()}",
+                json={"name": "N"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 503
+
+    def test_update_customer_invalid_column(self, api_client):
+        """Returns 422 when pg_store raises ValueError on invalid column."""
+        with patch(
+            "proxy.api.config_routes.pg_store.update_customer",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Invalid column name: evil"),
+        ):
+            resp = api_client.put(
+                f"/api/config/customers/{uuid4()}",
+                json={"name": "N"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 422
+
+    def test_delete_customer_db_unavailable(self, api_client):
+        """Returns 503 when DB raises StoreUnavailable on delete."""
+        from proxy.store.postgres import StoreUnavailable
+
+        with patch(
+            "proxy.api.config_routes.pg_store.delete_customer",
+            new_callable=AsyncMock,
+            side_effect=StoreUnavailable("no pool"),
+        ):
+            resp = api_client.delete(
+                f"/api/config/customers/{uuid4()}",
+                headers=_AUTH,
+            )
+        assert resp.status_code == 503
 
     def test_update_customer_empty_body(self, api_client):
         """Empty update body still succeeds (no-op update)."""
@@ -322,6 +388,18 @@ class TestAppCRUDEdgeCases:
         with patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=None):
             resp = api_client.get(f"/api/config/apps/{uuid4()}", headers=_AUTH)
         assert resp.status_code == 404
+
+    def test_get_app_db_unavailable(self, api_client):
+        """Returns 503 when DB raises StoreUnavailable on get_app."""
+        from proxy.store.postgres import StoreUnavailable
+
+        with patch(
+            "proxy.api.config_routes.pg_store.get_app",
+            new_callable=AsyncMock,
+            side_effect=StoreUnavailable("no pool"),
+        ):
+            resp = api_client.get(f"/api/config/apps/{uuid4()}", headers=_AUTH)
+        assert resp.status_code == 503
 
     def test_update_app(self, api_client):
         """PUT /apps/{id} updates an app."""
@@ -349,25 +427,75 @@ class TestAppCRUDEdgeCases:
             )
         assert resp.status_code == 404
 
+    def test_update_app_invalid_column(self, api_client):
+        """Returns 422 when pg_store raises ValueError on update_app."""
+        with patch(
+            "proxy.api.config_routes.pg_store.update_app",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Invalid column name: evil"),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{uuid4()}",
+                json={"name": "X"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 422
+
     def test_delete_app_not_found(self, api_client):
         with patch("proxy.api.config_routes.pg_store.delete_app", new_callable=AsyncMock, return_value=False):
             resp = api_client.delete(f"/api/config/apps/{uuid4()}", headers=_AUTH)
         assert resp.status_code == 404
 
     def test_create_app_db_unavailable(self, api_client):
-        """Returns 503 when DB returns None for app creation."""
+        """Returns 503 when DB raises StoreUnavailable for app creation."""
+        from proxy.store.postgres import StoreUnavailable
+
         cid = uuid4()
         mock_cust = {"id": cid, "name": "C", "plan": "s", "settings": {}, "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:00:00Z"}
         with (
             patch("proxy.api.config_routes.pg_store.get_customer", new_callable=AsyncMock, return_value=mock_cust),
-            patch("proxy.api.config_routes.pg_store.create_app", new_callable=AsyncMock, return_value=None),
+            patch("proxy.api.config_routes.pg_store.create_app", new_callable=AsyncMock, side_effect=StoreUnavailable("no pool")),
         ):
             resp = api_client.post(
                 f"/api/config/customers/{cid}/apps/",
-                json={"name": "A", "origin_url": "http://a:3000", "domain": "a.com"},
+                json={"name": "A", "origin_url": "https://example.com", "domain": "a.com"},
                 headers=_AUTH,
             )
         assert resp.status_code == 503
+
+    def test_create_app_ssrf_private_ip(self, api_client):
+        """Returns 422 when origin_url points to a private IP."""
+        cid = uuid4()
+        mock_cust = {"id": cid, "name": "C", "plan": "s", "settings": {}, "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:00:00Z"}
+        with patch("proxy.api.config_routes.pg_store.get_customer", new_callable=AsyncMock, return_value=mock_cust):
+            resp = api_client.post(
+                f"/api/config/customers/{cid}/apps/",
+                json={"name": "A", "origin_url": "http://169.254.169.254/latest", "domain": "a.com"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 422
+        assert "origin_url" in resp.json()["detail"].lower()
+
+    def test_create_app_ssrf_localhost(self, api_client):
+        """Returns 422 when origin_url is localhost."""
+        cid = uuid4()
+        mock_cust = {"id": cid, "name": "C", "plan": "s", "settings": {}, "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:00:00Z"}
+        with patch("proxy.api.config_routes.pg_store.get_customer", new_callable=AsyncMock, return_value=mock_cust):
+            resp = api_client.post(
+                f"/api/config/customers/{cid}/apps/",
+                json={"name": "A", "origin_url": "http://127.0.0.1:8080", "domain": "a.com"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 422
+
+    def test_update_app_ssrf_blocked(self, api_client):
+        """Returns 422 when updating origin_url to a private IP."""
+        resp = api_client.put(
+            f"/api/config/apps/{uuid4()}",
+            json={"origin_url": "http://10.0.0.1:3000"},
+            headers=_AUTH,
+        )
+        assert resp.status_code == 422
 
 
 class TestRateLimitsEndpoint:

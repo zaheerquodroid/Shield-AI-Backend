@@ -49,6 +49,9 @@ resource "aws_security_group" "db_proxy" {
 
 # Task Definition — stub using postgres:15-alpine
 resource "aws_ecs_task_definition" "db_proxy" {
+  # Safety: prevent accidental production deployment of stub
+  count = var.environment != "prod" ? 1 : 0
+
   family                   = "shieldai-db-proxy-${var.environment}"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]

@@ -33,22 +33,19 @@ variable "certificate_arn" {
   type        = string
 }
 
-variable "redis_url" {
-  description = "Connection URL for the Redis instance used by the proxy"
+variable "redis_url_ssm_arn" {
+  description = "SSM Parameter Store ARN for Redis URL"
   type        = string
-  sensitive   = true
 }
 
-variable "postgres_url" {
-  description = "Connection URL for the PostgreSQL database used by the proxy"
+variable "postgres_url_ssm_arn" {
+  description = "SSM Parameter Store ARN for PostgreSQL URL"
   type        = string
-  sensitive   = true
 }
 
-variable "api_key" {
-  description = "API key for the ShieldAI proxy service"
+variable "api_key_ssm_arn" {
+  description = "SSM Parameter Store ARN for API key"
   type        = string
-  sensitive   = true
 }
 
 variable "cpu" {

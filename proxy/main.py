@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
 from proxy.config.loader import get_settings, load_settings, register_reload_handler
-from proxy.health import router as health_router
+from proxy.health import close_health_client, router as health_router
 from proxy.logging_config import setup_logging
 from proxy.middleware.audit_logger import AuditLogger
 from proxy.middleware.context_injector import ContextInjector
@@ -63,8 +63,11 @@ async def lifespan(app: FastAPI):
     # Init HTTP client for proxying
     _http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(settings.proxy_timeout),
-        follow_redirects=False,
-        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        follow_redirects=settings.upstream_follow_redirects,
+        limits=httpx.Limits(
+            max_connections=settings.upstream_max_connections,
+            max_keepalive_connections=settings.upstream_max_keepalive,
+        ),
     )
 
     # Build middleware pipeline
@@ -87,6 +90,7 @@ async def lifespan(app: FastAPI):
 
     if _http_client:
         await _http_client.aclose()
+    await close_health_client()
     await redis_store.close_redis()
 
     logger.info("proxy_stopped")
@@ -137,11 +141,14 @@ async def proxy_request(request: Request, path: str) -> Response:
     if request.url.query:
         upstream_url = f"{upstream_url}?{request.url.query}"
 
-    # Build upstream headers — filter hop-by-hop
+    # Build upstream headers — filter hop-by-hop and stripped spoofed headers
+    stripped = context.extra.get("stripped_headers", set())
     headers = {}
     for key, value in request.headers.items():
-        if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host":
-            headers[key] = value
+        lower = key.lower()
+        if lower in HOP_BY_HOP_HEADERS or lower == "host" or lower in stripped:
+            continue
+        headers[key] = value
 
     # Inject context headers
     if context.request_id:
@@ -151,8 +158,17 @@ async def proxy_request(request: Request, path: str) -> Response:
     if context.user_id:
         headers["x-user-id"] = context.user_id
 
-    # Read request body
+    # Read request body with size limit
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.max_body_bytes:
+                return Response(content="Request body too large", status_code=413)
+        except (ValueError, OverflowError):
+            return Response(content="Invalid Content-Length", status_code=400)
     body = await request.body()
+    if len(body) > settings.max_body_bytes:
+        return Response(content="Request body too large", status_code=413)
 
     try:
         upstream_resp = await _http_client.request(

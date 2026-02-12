@@ -34,9 +34,9 @@ module "proxy_ecs" {
   min_count       = var.min_count
   max_count       = var.max_count
   certificate_arn = var.certificate_arn
-  redis_url       = var.redis_url
-  postgres_url    = var.postgres_url
-  api_key         = var.api_key
+  redis_url_ssm_arn    = var.redis_url_ssm_arn
+  postgres_url_ssm_arn = var.postgres_url_ssm_arn
+  api_key_ssm_arn      = var.api_key_ssm_arn
 }
 
 # ---------------------------------------------------------------------------

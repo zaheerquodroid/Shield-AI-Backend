@@ -200,3 +200,60 @@ async def test_short_circuit_response_not_passed_to_response_pipeline():
     result = await pipeline.process_request(None, context)
     assert result.status_code == 403
     assert "req:after" not in order_log
+
+
+# --- Exception handling tests ---
+
+
+class CrashingRequestMiddleware(Middleware):
+    """Middleware that raises during process_request."""
+
+    async def process_request(self, request, context):
+        raise RuntimeError("middleware exploded")
+
+
+class CrashingResponseMiddleware(Middleware):
+    """Middleware that raises during process_response."""
+
+    async def process_request(self, request, context):
+        return None
+
+    async def process_response(self, response, context):
+        raise RuntimeError("response handler exploded")
+
+
+@pytest.mark.asyncio
+async def test_request_middleware_exception_returns_502():
+    """A middleware that raises should return 502, not crash the pipeline."""
+    order_log: list[str] = []
+    pipeline = MiddlewarePipeline()
+    pipeline.add(TrackingMiddleware("before", order_log))
+    pipeline.add(CrashingRequestMiddleware())
+    pipeline.add(TrackingMiddleware("after", order_log))
+
+    context = RequestContext()
+    result = await pipeline.process_request(None, context)
+
+    assert result is not None
+    assert result.status_code == 502
+    assert order_log == ["req:before"]  # "after" not reached
+
+
+@pytest.mark.asyncio
+async def test_response_middleware_exception_skipped():
+    """A middleware that raises during response should be skipped, not crash."""
+    order_log: list[str] = []
+    pipeline = MiddlewarePipeline()
+    pipeline.add(TrackingMiddleware("first", order_log))
+    pipeline.add(CrashingResponseMiddleware())
+    pipeline.add(TrackingMiddleware("third", order_log))
+
+    context = RequestContext()
+    response = Response(content="ok", status_code=200)
+    result = await pipeline.process_response(response, context)
+
+    # Response is still returned despite the crash
+    assert result.status_code == 200
+    # first and third still ran (reverse order: third, crash, first)
+    assert "resp:third" in order_log
+    assert "resp:first" in order_log

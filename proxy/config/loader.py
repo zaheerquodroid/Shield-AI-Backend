@@ -62,6 +62,14 @@ class ProxySettings(BaseSettings):
     # Security headers
     header_preset: str = "balanced"
 
+    # Request body limit (10MB default)
+    max_body_bytes: int = 10 * 1024 * 1024
+
+    # HTTP client settings
+    upstream_max_connections: int = 100
+    upstream_max_keepalive: int = 20
+    upstream_follow_redirects: bool = False
+
 _settings: ProxySettings | None = None
 
 

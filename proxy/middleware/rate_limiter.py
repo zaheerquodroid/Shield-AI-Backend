@@ -63,29 +63,26 @@ class RateLimiter(Middleware):
         now = time.time()
         window_start = now - window
 
+        # Phase 1: cleanup expired entries and count current window
         try:
             pipe = redis.pipeline()
-            # Remove expired entries
             pipe.zremrangebyscore(key, 0, window_start)
-            # Add current request
-            pipe.zadd(key, {f"{now}:{context.request_id}": now})
-            # Count requests in window
             pipe.zcard(key)
-            # Set TTL to auto-clean
-            pipe.expire(key, window + 1)
             results = await pipe.execute()
-            current_count = results[2]
+            current_count = results[1]
         except Exception as exc:
             logger.warning("rate_limiter_redis_error", error=str(exc), action="pass_through")
             return None
 
         # Store rate-limit info for response headers
-        remaining = max(0, max_requests - current_count)
+        # current_count is BEFORE adding this request; after adding, remaining decreases by 1
+        remaining = max(0, max_requests - current_count - 1)
         context.extra["rate_limit_max"] = max_requests
         context.extra["rate_limit_remaining"] = remaining
         context.extra["rate_limit_reset"] = int(now + window)
 
-        if current_count > max_requests:
+        if current_count >= max_requests:
+            # Blocked — do NOT add to sorted set (prevents counter inflation)
             retry_after = int(window)
             logger.warning(
                 "rate_limit_exceeded",
@@ -106,6 +103,15 @@ class RateLimiter(Middleware):
                     "X-RateLimit-Reset": str(int(now + window)),
                 },
             )
+
+        # Phase 2: request allowed — record it and set TTL
+        try:
+            pipe = redis.pipeline()
+            pipe.zadd(key, {f"{now}:{context.request_id}": now})
+            pipe.expire(key, window + 1)
+            await pipe.execute()
+        except Exception as exc:
+            logger.warning("rate_limiter_track_error", error=str(exc))
 
         return None
 

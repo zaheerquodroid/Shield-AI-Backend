@@ -13,17 +13,32 @@ from proxy.middleware.pipeline import RequestContext
 from proxy.middleware.rate_limiter import RateLimiter
 
 
-def _mock_redis(execute_return=None, execute_side_effect=None):
-    """Create a mock Redis whose pipeline methods are sync (like real redis-py)."""
+def _mock_redis(current_count, phase2_ok=True, phase1_error=None, phase2_error=None):
+    """Create a mock Redis for the two-phase rate limiter.
+
+    Phase 1: zremrangebyscore + zcard → [None, current_count]
+    Phase 2: zadd + expire → [None, None]  (only called if allowed)
+    """
+    call_count = 0
+
+    async def _execute():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            if phase1_error:
+                raise phase1_error
+            return [None, current_count]
+        else:
+            if phase2_error:
+                raise phase2_error
+            return [None, None]
+
     pipe = MagicMock()
     pipe.zremrangebyscore = MagicMock(return_value=pipe)
     pipe.zadd = MagicMock(return_value=pipe)
     pipe.zcard = MagicMock(return_value=pipe)
     pipe.expire = MagicMock(return_value=pipe)
-    if execute_side_effect:
-        pipe.execute = AsyncMock(side_effect=execute_side_effect)
-    else:
-        pipe.execute = AsyncMock(return_value=execute_return)
+    pipe.execute = AsyncMock(side_effect=_execute)
 
     mock = MagicMock()
     mock.pipeline = MagicMock(return_value=pipe)
@@ -64,13 +79,14 @@ class TestRateLimiterUnderLimit:
         """Requests under the limit should pass through."""
         limiter = RateLimiter()
         ctx = _make_context()
-        redis = _mock_redis(execute_return=[None, None, 10, None])
+        # 9 existing requests → allowed (9 < 2000), remaining = 2000 - 9 - 1 = 1990
+        redis = _mock_redis(current_count=9)
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request(), ctx)
 
         assert result is None
-        assert ctx.extra["rate_limit_remaining"] == 1990  # 2000 - 10
+        assert ctx.extra["rate_limit_remaining"] == 1990
 
     @pytest.mark.asyncio
     async def test_injects_rate_limit_headers_on_response(self):
@@ -95,7 +111,8 @@ class TestRateLimiterOverLimit:
         """Should return 429 when rate limit is exceeded."""
         limiter = RateLimiter()
         ctx = _make_context()
-        redis = _mock_redis(execute_return=[None, None, 2001, None])
+        # 2001 existing → 2001 >= 2000 → blocked
+        redis = _mock_redis(current_count=2001)
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request(), ctx)
@@ -106,25 +123,67 @@ class TestRateLimiterOverLimit:
         assert result.headers["X-RateLimit-Remaining"] == "0"
 
     @pytest.mark.asyncio
+    async def test_allows_at_exact_limit_minus_one(self):
+        """1999 existing requests (this is the 2000th) should pass."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        # 1999 existing → 1999 >= 2000 = false → allowed
+        redis = _mock_redis(current_count=1999)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_blocks_at_exact_limit(self):
+        """2000 existing requests → 2000 >= 2000 = blocked."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=2000)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result is not None
+        assert result.status_code == 429
+
+    @pytest.mark.asyncio
     async def test_429_response_body_is_json(self):
         """429 response should have JSON body."""
         limiter = RateLimiter()
         ctx = _make_context()
-        redis = _mock_redis(execute_return=[None, None, 2001, None])
+        redis = _mock_redis(current_count=2001)
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request(), ctx)
 
         assert b"Rate limit exceeded" in result.body
 
+    @pytest.mark.asyncio
+    async def test_blocked_request_does_not_zadd(self):
+        """Blocked requests should NOT be added to the sorted set."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=2000)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result.status_code == 429
+        pipe = redis.pipeline()
+        # Phase 2 (zadd) should never be called — only 1 execute call (phase 1)
+        assert pipe.execute.call_count == 1
+
 
 class TestRateLimiterAuthDetection:
     @pytest.mark.asyncio
     async def test_auth_endpoint_uses_lower_limit(self):
-        """Auth endpoints should use the lower auth limit."""
+        """Auth endpoints should use the lower auth limit (500)."""
         limiter = RateLimiter()
         ctx = _make_context()
-        redis = _mock_redis(execute_return=[None, None, 501, None])
+        # 500 existing → 500 >= 500 → blocked
+        redis = _mock_redis(current_count=500)
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request("/auth/login"), ctx)
@@ -137,7 +196,8 @@ class TestRateLimiterAuthDetection:
         """Non-auth endpoints should allow up to the global limit."""
         limiter = RateLimiter()
         ctx = _make_context()
-        redis = _mock_redis(execute_return=[None, None, 501, None])
+        # 500 existing → 500 >= 2000 = false → allowed
+        redis = _mock_redis(current_count=500)
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request("/api/data"), ctx)
@@ -151,7 +211,8 @@ class TestRateLimiterCustomerOverride:
         """Per-customer rate limit overrides should be applied."""
         limiter = RateLimiter()
         ctx = _make_context(rate_overrides={"global_max": 100})
-        redis = _mock_redis(execute_return=[None, None, 101, None])
+        # 100 existing → 100 >= 100 → blocked
+        redis = _mock_redis(current_count=100)
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request(), ctx)
@@ -174,10 +235,22 @@ class TestRateLimiterGraceful:
 
     @pytest.mark.asyncio
     async def test_redis_error_passes_through(self):
-        """When Redis raises an error, requests should pass through."""
+        """When Redis raises an error on phase 1, requests should pass through."""
         limiter = RateLimiter()
         ctx = _make_context()
-        redis = _mock_redis(execute_side_effect=ConnectionError("Redis down"))
+        redis = _mock_redis(current_count=0, phase1_error=ConnectionError("Redis down"))
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_phase2_error_still_allows_request(self):
+        """If phase 2 (zadd) fails, request was already allowed — no 429."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=5, phase2_error=ConnectionError("Redis flap"))
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request(), ctx)

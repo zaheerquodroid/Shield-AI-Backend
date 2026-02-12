@@ -72,9 +72,16 @@ resource "aws_security_group" "ecs_tasks" {
 resource "aws_lb" "proxy" {
   name               = "shieldai-proxy-${var.environment}"
   internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = var.subnet_ids
+  load_balancer_type         = "application"
+  enable_deletion_protection = var.environment == "prod"
+  security_groups            = [aws_security_group.alb.id]
+  subnets                    = var.subnet_ids
+
+  access_logs {
+    bucket  = var.alb_access_logs_bucket
+    prefix  = "shieldai-proxy-${var.environment}"
+    enabled = var.enable_alb_access_logs
+  }
 
   tags = {
     Name        = "shieldai-proxy-alb-${var.environment}"

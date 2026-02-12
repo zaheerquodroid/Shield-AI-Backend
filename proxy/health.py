@@ -12,14 +12,33 @@ from proxy.store import redis as redis_store
 logger = structlog.get_logger()
 router = APIRouter()
 
+# Module-level reusable client for health checks
+_health_client: httpx.AsyncClient | None = None
+
+
+def _get_health_client() -> httpx.AsyncClient:
+    """Get or create the reusable health-check HTTP client."""
+    global _health_client
+    if _health_client is None or _health_client.is_closed:
+        _health_client = httpx.AsyncClient(timeout=5.0)
+    return _health_client
+
+
+async def close_health_client() -> None:
+    """Close the health-check HTTP client (called during shutdown)."""
+    global _health_client
+    if _health_client and not _health_client.is_closed:
+        await _health_client.aclose()
+    _health_client = None
+
 
 async def _check_upstream() -> bool:
     """Check if upstream is reachable with a HEAD request."""
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.head(settings.upstream_url)
-            return resp.status_code < 500
+        client = _get_health_client()
+        resp = await client.head(settings.upstream_url)
+        return resp.status_code < 500
     except Exception:
         return False
 
@@ -40,7 +59,11 @@ async def health():
 
 @router.get("/ready")
 async def ready():
-    """Readiness check — returns 200 only when all connections are established."""
+    """Readiness check — returns 200 only when all connections are established.
+
+    Both Redis and upstream are hard dependencies for a security proxy.
+    A proxy without rate limiting (Redis down) is a security concern.
+    """
     redis_ok = await redis_store.ping()
     upstream_ok = await _check_upstream()
 

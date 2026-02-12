@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -16,6 +18,15 @@ _pool = None
 # Whitelisted column names for dynamic UPDATE statements
 _CUSTOMER_COLUMNS = frozenset({"name", "plan", "settings"})
 _APP_COLUMNS = frozenset({"name", "origin_url", "domain", "enabled_features", "settings"})
+
+# PBKDF2 parameters for API key hashing
+_PBKDF2_ITERATIONS = 260_000
+_PBKDF2_HASH = "sha256"
+
+
+class StoreUnavailable(Exception):
+    """Raised when the database connection pool is not available."""
+    pass
 
 try:
     import asyncpg
@@ -57,8 +68,35 @@ async def run_migrations() -> None:
 
 
 def hash_api_key(api_key: str) -> str:
-    """Hash an API key for storage."""
-    return hashlib.sha256(api_key.encode()).hexdigest()
+    """Hash an API key with PBKDF2 and random salt for storage.
+
+    Returns format: pbkdf2$<salt_hex>$<hash_hex>
+    """
+    salt = os.urandom(32)
+    key_hash = hashlib.pbkdf2_hmac(_PBKDF2_HASH, api_key.encode(), salt, _PBKDF2_ITERATIONS)
+    return f"pbkdf2${salt.hex()}${key_hash.hex()}"
+
+
+def verify_api_key(api_key: str, stored_hash: str) -> bool:
+    """Verify an API key against a stored hash (constant-time).
+
+    Supports both PBKDF2 (new) and legacy unsalted SHA-256 hashes.
+    """
+    if stored_hash.startswith("pbkdf2$"):
+        parts = stored_hash.split("$")
+        if len(parts) != 3:
+            return False
+        try:
+            salt = bytes.fromhex(parts[1])
+            expected = bytes.fromhex(parts[2])
+        except ValueError:
+            return False
+        actual = hashlib.pbkdf2_hmac(_PBKDF2_HASH, api_key.encode(), salt, _PBKDF2_ITERATIONS)
+        return hmac.compare_digest(actual, expected)
+    else:
+        # Legacy SHA-256 (unsalted) — constant-time comparison
+        actual = hashlib.sha256(api_key.encode()).hexdigest()
+        return hmac.compare_digest(actual, stored_hash)
 
 
 # --- Customer CRUD ---
@@ -66,7 +104,7 @@ def hash_api_key(api_key: str) -> str:
 async def create_customer(name: str, plan: str, api_key: str, settings: dict) -> dict[str, Any] | None:
     """Insert a new customer and return it."""
     if _pool is None:
-        return None
+        raise StoreUnavailable("Database connection pool not initialized")
     key_hash = hash_api_key(api_key)
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -81,7 +119,7 @@ async def create_customer(name: str, plan: str, api_key: str, settings: dict) ->
 async def get_customer(customer_id: UUID) -> dict[str, Any] | None:
     """Fetch a customer by ID."""
     if _pool is None:
-        return None
+        raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, name, plan, settings, created_at, updated_at FROM customers WHERE id = $1",
@@ -93,7 +131,7 @@ async def get_customer(customer_id: UUID) -> dict[str, Any] | None:
 async def update_customer(customer_id: UUID, **fields) -> dict[str, Any] | None:
     """Update a customer. Only non-None, whitelisted fields are updated."""
     if _pool is None:
-        return None
+        raise StoreUnavailable("Database connection pool not initialized")
     set_clauses = []
     values = []
     idx = 1
@@ -117,7 +155,7 @@ async def update_customer(customer_id: UUID, **fields) -> dict[str, Any] | None:
 async def delete_customer(customer_id: UUID) -> bool:
     """Delete a customer by ID."""
     if _pool is None:
-        return False
+        raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
         result = await conn.execute("DELETE FROM customers WHERE id = $1", customer_id)
         return result == "DELETE 1"
@@ -129,7 +167,7 @@ async def create_app(customer_id: UUID, name: str, origin_url: str, domain: str,
                      enabled_features: dict, settings: dict) -> dict[str, Any] | None:
     """Insert a new app and return it."""
     if _pool is None:
-        return None
+        raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """INSERT INTO apps (customer_id, name, origin_url, domain, enabled_features, settings)
@@ -143,7 +181,7 @@ async def create_app(customer_id: UUID, name: str, origin_url: str, domain: str,
 async def get_app(app_id: UUID) -> dict[str, Any] | None:
     """Fetch an app by ID."""
     if _pool is None:
-        return None
+        raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, customer_id, name, origin_url, domain, enabled_features, settings, created_at, updated_at FROM apps WHERE id = $1",
@@ -155,7 +193,7 @@ async def get_app(app_id: UUID) -> dict[str, Any] | None:
 async def get_all_apps() -> list[dict[str, Any]]:
     """Fetch all apps."""
     if _pool is None:
-        return []
+        raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, customer_id, name, origin_url, domain, enabled_features, settings, created_at, updated_at FROM apps"
@@ -166,7 +204,7 @@ async def get_all_apps() -> list[dict[str, Any]]:
 async def update_app(app_id: UUID, **fields) -> dict[str, Any] | None:
     """Update an app. Only non-None, whitelisted fields are updated."""
     if _pool is None:
-        return None
+        raise StoreUnavailable("Database connection pool not initialized")
     set_clauses = []
     values = []
     idx = 1
@@ -190,7 +228,7 @@ async def update_app(app_id: UUID, **fields) -> dict[str, Any] | None:
 async def delete_app(app_id: UUID) -> bool:
     """Delete an app by ID."""
     if _pool is None:
-        return False
+        raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
         result = await conn.execute("DELETE FROM apps WHERE id = $1", app_id)
         return result == "DELETE 1"

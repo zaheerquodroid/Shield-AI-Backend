@@ -11,10 +11,17 @@ from proxy.store import postgres as pg_store
 
 
 class TestHashApiKey:
-    def test_returns_sha256_hex(self):
+    def test_returns_pbkdf2_format(self):
         result = pg_store.hash_api_key("my-secret")
-        assert len(result) == 64  # SHA-256 hex digest
-        assert result == pg_store.hash_api_key("my-secret")  # deterministic
+        parts = result.split("$")
+        assert len(parts) == 3
+        assert parts[0] == "pbkdf2"
+
+    def test_salted_not_deterministic(self):
+        """Two hashes of the same key differ due to random salt."""
+        a = pg_store.hash_api_key("my-secret")
+        b = pg_store.hash_api_key("my-secret")
+        assert a != b
 
     def test_different_keys_produce_different_hashes(self):
         a = pg_store.hash_api_key("key-a")
@@ -23,11 +30,11 @@ class TestHashApiKey:
 
     def test_empty_key(self):
         result = pg_store.hash_api_key("")
-        assert len(result) == 64
+        assert result.startswith("pbkdf2$")
 
 
 class TestPoolNonePaths:
-    """All CRUD helpers should return None/empty/False when _pool is None."""
+    """All CRUD helpers should raise StoreUnavailable when _pool is None."""
 
     @pytest.fixture(autouse=True)
     def _ensure_no_pool(self):
@@ -37,49 +44,49 @@ class TestPoolNonePaths:
         pg_store._pool = original
 
     @pytest.mark.asyncio
-    async def test_create_customer_returns_none(self):
-        result = await pg_store.create_customer("n", "p", "k", {})
-        assert result is None
+    async def test_create_customer_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.create_customer("n", "p", "k", {})
 
     @pytest.mark.asyncio
-    async def test_get_customer_returns_none(self):
-        result = await pg_store.get_customer(uuid4())
-        assert result is None
+    async def test_get_customer_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.get_customer(uuid4())
 
     @pytest.mark.asyncio
-    async def test_update_customer_returns_none(self):
-        result = await pg_store.update_customer(uuid4(), name="x")
-        assert result is None
+    async def test_update_customer_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.update_customer(uuid4(), name="x")
 
     @pytest.mark.asyncio
-    async def test_delete_customer_returns_false(self):
-        result = await pg_store.delete_customer(uuid4())
-        assert result is False
+    async def test_delete_customer_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.delete_customer(uuid4())
 
     @pytest.mark.asyncio
-    async def test_create_app_returns_none(self):
-        result = await pg_store.create_app(uuid4(), "n", "u", "d", {}, {})
-        assert result is None
+    async def test_create_app_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.create_app(uuid4(), "n", "u", "d", {}, {})
 
     @pytest.mark.asyncio
-    async def test_get_app_returns_none(self):
-        result = await pg_store.get_app(uuid4())
-        assert result is None
+    async def test_get_app_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.get_app(uuid4())
 
     @pytest.mark.asyncio
-    async def test_update_app_returns_none(self):
-        result = await pg_store.update_app(uuid4(), name="x")
-        assert result is None
+    async def test_update_app_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.update_app(uuid4(), name="x")
 
     @pytest.mark.asyncio
-    async def test_delete_app_returns_false(self):
-        result = await pg_store.delete_app(uuid4())
-        assert result is False
+    async def test_delete_app_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.delete_app(uuid4())
 
     @pytest.mark.asyncio
-    async def test_get_all_apps_returns_empty(self):
-        result = await pg_store.get_all_apps()
-        assert result == []
+    async def test_get_all_apps_raises(self):
+        with pytest.raises(pg_store.StoreUnavailable):
+            await pg_store.get_all_apps()
 
     @pytest.mark.asyncio
     async def test_run_migrations_skipped(self):

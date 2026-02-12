@@ -71,20 +71,33 @@ class MiddlewarePipeline:
         """Run request through all enabled middleware in order.
 
         Returns a Response if any middleware short-circuits, otherwise None.
+        Individual middleware exceptions are caught so one broken middleware
+        doesn't crash the entire pipeline.
         """
         for mw in self._middleware:
             if not self._enabled.get(mw.name, True):
                 continue
-            result = await mw.process_request(request, context)
+            try:
+                result = await mw.process_request(request, context)
+            except Exception:
+                logger.exception("middleware_request_error", middleware=mw.name)
+                return Response(content="Internal proxy error", status_code=502)
             if isinstance(result, Response):
                 logger.info("middleware_short_circuit", middleware=mw.name)
                 return result
         return None
 
     async def process_response(self, response: Response, context: RequestContext) -> Response:
-        """Run response through all enabled middleware in reverse order."""
+        """Run response through all enabled middleware in reverse order.
+
+        Individual middleware exceptions are caught so one broken middleware
+        doesn't corrupt the response.
+        """
         for mw in reversed(self._middleware):
             if not self._enabled.get(mw.name, True):
                 continue
-            response = await mw.process_response(response, context)
+            try:
+                response = await mw.process_response(response, context)
+            except Exception:
+                logger.exception("middleware_response_error", middleware=mw.name)
         return response

@@ -8,6 +8,7 @@ from starlette.responses import Response
 
 from proxy.config.customer_config import get_config_service
 from proxy.middleware.pipeline import Middleware, RequestContext
+from proxy.middleware.url_validator import validate_origin_url
 
 logger = structlog.get_logger()
 
@@ -28,6 +29,14 @@ class TenantRouter(Middleware):
         # Set tenant info from config if available
         if "customer_id" in config:
             context.tenant_id = config["customer_id"]
+
+        # Validate origin URL to prevent SSRF (skip for default/dev config)
+        if "customer_id" in config:
+            origin_url = config.get("origin_url", "")
+            error = validate_origin_url(origin_url)
+            if error:
+                logger.error("ssrf_blocked", domain=domain, origin_url=origin_url, reason=error)
+                return Response(content="Upstream configuration error", status_code=502)
 
         if domain and domain not in ("localhost", "127.0.0.1") and "customer_id" not in config:
             logger.warning("unknown_domain", domain=domain)

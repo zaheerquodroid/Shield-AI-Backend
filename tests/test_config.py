@@ -139,6 +139,22 @@ class TestProxySettingsNewFields:
         settings = ProxySettings()
         assert settings.header_preset == "strict"
 
+    def test_max_body_bytes_default(self, monkeypatch):
+        for key in list(os.environ):
+            if key.startswith("PROXY_"):
+                monkeypatch.delenv(key, raising=False)
+        settings = ProxySettings()
+        assert settings.max_body_bytes == 10 * 1024 * 1024  # 10MB
+
+    def test_http_client_settings_defaults(self, monkeypatch):
+        for key in list(os.environ):
+            if key.startswith("PROXY_"):
+                monkeypatch.delenv(key, raising=False)
+        settings = ProxySettings()
+        assert settings.upstream_max_connections == 100
+        assert settings.upstream_max_keepalive == 20
+        assert settings.upstream_follow_redirects is False
+
 
 class TestCustomerConfigEdgeCases:
     """Edge cases for customer config service."""
@@ -203,3 +219,16 @@ class TestCustomerConfigEdgeCases:
         import time
         service._cache_time = time.monotonic()
         assert not service.is_stale()
+
+    def test_default_config_deep_copy_isolation(self):
+        """Mutating returned default config must not corrupt the shared default."""
+        service = CustomerConfigService()
+        config1 = service.get_config("unknown-1.com")
+        # Mutate nested dict
+        config1["enabled_features"]["waf"] = False
+        config1["settings"]["injected"] = "evil"
+
+        # Second call should still get clean defaults
+        config2 = service.get_config("unknown-2.com")
+        assert config2["enabled_features"]["waf"] is True
+        assert config2["settings"] == {}

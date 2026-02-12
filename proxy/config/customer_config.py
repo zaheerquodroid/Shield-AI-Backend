@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 from typing import Any
@@ -62,7 +63,7 @@ class CustomerConfigService:
         config = self._cache.get(domain)
         if config is None:
             logger.debug("customer_config_miss", domain=domain)
-            return dict(_DEFAULT_CONFIG)
+            return copy.deepcopy(_DEFAULT_CONFIG)
         return config
 
     def is_stale(self) -> bool:

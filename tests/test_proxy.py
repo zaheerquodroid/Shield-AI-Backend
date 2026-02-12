@@ -274,3 +274,80 @@ def test_upstream_redirect_not_followed(proxy_client):
     mock_http.request = AsyncMock(return_value=mock_resp)
     resp = client.get("/test", follow_redirects=False)
     assert resp.status_code == 302
+
+
+# --- Spoofed header stripping ---
+
+
+def test_spoofed_tenant_id_stripped(proxy_client):
+    """Spoofed X-Tenant-ID header must not be forwarded to upstream."""
+    client, mock_http = proxy_client
+    resp = client.get("/test", headers={"X-Tenant-ID": "spoofed-tenant"})
+    assert resp.status_code == 200
+    forwarded = mock_http.request.call_args.kwargs["headers"]
+    # The header should be stripped by context_injector + main.py
+    assert "x-tenant-id" not in {k.lower() for k in forwarded}
+
+
+def test_spoofed_user_id_stripped(proxy_client):
+    """Spoofed X-User-ID header must not be forwarded to upstream."""
+    client, mock_http = proxy_client
+    resp = client.get("/test", headers={"X-User-ID": "spoofed-user"})
+    assert resp.status_code == 200
+    forwarded = mock_http.request.call_args.kwargs["headers"]
+    assert "x-user-id" not in {k.lower() for k in forwarded}
+
+
+def test_spoofed_shieldai_header_stripped(proxy_client):
+    """Spoofed X-ShieldAI-* headers must not be forwarded to upstream."""
+    client, mock_http = proxy_client
+    resp = client.get("/test", headers={"X-ShieldAI-Internal": "spoofed"})
+    assert resp.status_code == 200
+    forwarded = mock_http.request.call_args.kwargs["headers"]
+    assert "x-shieldai-internal" not in {k.lower() for k in forwarded}
+
+
+def test_legitimate_headers_not_stripped(proxy_client):
+    """Non-spoofed headers should still be forwarded."""
+    client, mock_http = proxy_client
+    resp = client.get("/test", headers={"X-Custom-Header": "keep-me"})
+    assert resp.status_code == 200
+    forwarded = mock_http.request.call_args.kwargs["headers"]
+    assert forwarded.get("x-custom-header") == "keep-me"
+
+
+# --- Body size limit ---
+
+
+def test_body_too_large_returns_413():
+    """POST with body exceeding max_body_bytes returns 413."""
+    import proxy.main as main_module
+
+    mock_response = httpx.Response(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        content=b'{"ok": true}',
+    )
+    mock_http = AsyncMock()
+    mock_http.request = AsyncMock(return_value=mock_response)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        main_module._http_client = mock_http
+        main_module._pipeline = _build_pipeline()
+        # Default max_body_bytes is 10MB, send content-length header claiming more
+        resp = client.post(
+            "/test",
+            content=b"x",
+            headers={"Content-Length": str(20 * 1024 * 1024)},
+        )
+        assert resp.status_code == 413
+
+    main_module._http_client = None
+    main_module._pipeline = None
+
+
+def test_body_under_limit_passes(proxy_client):
+    """POST with small body passes through fine."""
+    client, mock_http = proxy_client
+    resp = client.post("/test", content=b"small body")
+    assert resp.status_code == 200

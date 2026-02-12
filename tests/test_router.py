@@ -201,3 +201,45 @@ async def test_ipv6_host_with_port():
 
     assert result is None
     # Should not crash, just use default config
+
+
+# --- SSRF validation ---
+
+
+@pytest.mark.asyncio
+async def test_ssrf_blocked_for_customer_config():
+    """Customer config with private IP origin_url returns 502."""
+    service = CustomerConfigService()
+    service._cache = {
+        "evil.example.com": {
+            "customer_id": "cust-evil",
+            "origin_url": "http://169.254.169.254/latest/meta-data/",
+            "enabled_features": {},
+            "settings": {},
+        }
+    }
+
+    router = TenantRouter()
+    context = RequestContext()
+
+    with patch("proxy.middleware.router.get_config_service", return_value=service):
+        result = await router.process_request(_make_request("evil.example.com"), context)
+
+    assert result is not None
+    assert result.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_ssrf_not_checked_for_default_config():
+    """Default config (localhost) should not trigger SSRF validation."""
+    service = CustomerConfigService()
+    service._cache = {}
+
+    router = TenantRouter()
+    context = RequestContext()
+
+    with patch("proxy.middleware.router.get_config_service", return_value=service):
+        result = await router.process_request(_make_request("unknown.example.com"), context)
+
+    # Default config uses localhost — should NOT be blocked
+    assert result is None
