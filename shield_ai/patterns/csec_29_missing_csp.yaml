@@ -1,0 +1,187 @@
+pattern_id: csec_29_missing_csp
+name: "Missing Content-Security-Policy Header"
+category: security_headers
+severity: high
+description: |
+  Detects Django applications that lack Content-Security-Policy (CSP) headers.
+  Without CSP, applications are vulnerable to XSS attacks as there's no browser-level
+  protection against malicious script injection.
+
+  CSP provides defense-in-depth by restricting which resources can be loaded and
+  executed, mitigating XSS even when input sanitization fails.
+
+jira_reference:
+  ticket: CSEC-29
+  epic: CSEC-5
+  project: "Coco TestAI Security Remediation"
+
+detection:
+  python:
+    # Pattern 1: No django-csp middleware in MIDDLEWARE
+    - pattern: "MIDDLEWARE\\s*=\\s*\\[([^\\]]+)\\]"
+      description: "MIDDLEWARE without CSP middleware"
+      example: |
+        MIDDLEWARE = [
+            'django.middleware.security.SecurityMiddleware',
+            'django.contrib.sessions.middleware.SessionMiddleware',
+        ]
+      severity: high
+      negative_lookahead: "(?:csp\\.middleware|CSPMiddleware|ContentSecurityPolicyMiddleware)"
+
+    # Pattern 2: No CSP configuration in settings
+    - pattern: "^(?!.*CSP_)"
+      description: "No CSP configuration found in settings"
+      example: "# Settings file without any CSP_ prefixed variables"
+      severity: high
+      context_check: "no_csp_settings"
+
+    # Pattern 3: Custom middleware without CSP
+    - pattern: "class\\s+(\\w*Middleware)\\([^)]*\\):"
+      description: "Custom middleware files without CSP implementation"
+      example: |
+        class CustomMiddleware:
+            def __init__(self, get_response):
+                pass
+      severity: medium
+      file_pattern: "**/middleware.py"
+      negative_lookahead: "(?:Content-Security-Policy|CSP)"
+
+file_patterns:
+  - "**/settings.py"
+  - "**/settings/*.py"
+  - "**/*settings*.py"
+  - "**/middleware.py"
+
+risk_assessment:
+  impact: high
+  exploitability: high
+  affected_scope: all_http_responses
+  attack_vectors:
+    - "Reflected XSS attacks"
+    - "Stored XSS attacks"
+    - "DOM-based XSS"
+    - "Inline script injection"
+    - "External malicious resource loading"
+    - "Clickjacking via frames"
+  vulnerabilities:
+    - "No browser-level XSS protection"
+    - "Malicious scripts can execute freely"
+    - "External resources loaded without restriction"
+    - "No defense-in-depth against XSS"
+    - "Session hijacking via injected scripts"
+  labels:
+    - P1-High
+    - security
+    - backend
+    - frontend
+    - extension-launch
+    - wrapper
+
+fix_strategy:
+  approach: configuration_addition
+  breaking_change: false
+  phased_implementation: true
+  description: |
+    Add Content-Security-Policy headers using either django-csp library
+    or custom middleware. Implementation is phased for safety:
+
+    Phase 1 (Report-Only): Monitor CSP violations without blocking
+    Phase 2 (Enforcement): Enable CSP enforcement after validation
+
+    This ensures existing functionality isn't broken by CSP restrictions.
+
+  implementation_options:
+    - option: library
+      name: "django-csp"
+      pros: "Battle-tested, nonce support, easy configuration, violation reporting"
+      cons: "External dependency"
+      recommended: true
+
+    - option: custom
+      name: "Custom CSP Middleware"
+      pros: "No dependencies, full control, lightweight"
+      cons: "More code to maintain, no built-in nonce support"
+
+  phases:
+    - phase: 1
+      name: "Report-Only Mode"
+      description: "Set CSP in report-only mode, log violations, analyze reports"
+      breaking_change: false
+
+    - phase: 2
+      name: "Enforcement Mode"
+      description: "Enable CSP enforcement after validating no critical violations"
+      breaking_change: false
+
+acceptance_criteria:
+  - "CSP header present on all HTTP responses"
+  - "CSP policy restricts script-src, style-src, connect-src, img-src, font-src"
+  - "CSP violations logged to monitoring endpoint"
+  - "Frontend application functions correctly with CSP"
+  - "No breaking changes to existing functionality"
+  - "CSP report-only mode available for testing"
+
+estimated_effort:
+  detection: "30 minutes"
+  fix_application: "3 hours (including testing in report-only mode)"
+  enforcement: "2 hours (validation and enforcement)"
+  testing: "2 hours"
+  total: "7.5 hours per codebase"
+
+compliance:
+  - standard: "OWASP Top 10 2021"
+    requirement: "A03:2021 - Injection"
+    description: "CSP mitigates XSS attacks (injection vulnerability)"
+
+  - standard: "OWASP ASVS"
+    requirement: "V14.4 - HTTP Security Headers"
+    description: "Verify CSP header is in place with appropriate directives"
+
+  - standard: "Mozilla Observatory"
+    requirement: "Security Headers"
+    description: "CSP required for A+ security rating"
+
+  - standard: "PCI DSS"
+    requirement: "6.5.7"
+    description: "Cross-site scripting (XSS) prevention"
+
+csp_policy_recommendations:
+  strict:
+    description: "Strict CSP policy for maximum security"
+    directives:
+      default-src: "'self'"
+      script-src: "'self'"
+      style-src: "'self'"
+      img-src: "'self' data: https:"
+      font-src: "'self' data:"
+      connect-src: "'self'"
+      frame-ancestors: "'none'"
+      base-uri: "'self'"
+      form-action: "'self'"
+
+  moderate:
+    description: "Moderate CSP policy allowing some inline scripts/styles"
+    directives:
+      default-src: "'self'"
+      script-src: "'self' 'unsafe-inline'"
+      style-src: "'self' 'unsafe-inline'"
+      img-src: "'self' data: https:"
+      font-src: "'self' data:"
+      connect-src: "'self'"
+      frame-ancestors: "'self'"
+      base-uri: "'self'"
+      form-action: "'self'"
+
+  permissive:
+    description: "Permissive CSP for legacy applications (gradual migration)"
+    directives:
+      default-src: "'self' 'unsafe-inline' 'unsafe-eval'"
+      img-src: "* data:"
+      connect-src: "*"
+
+references:
+  - "https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP"
+  - "https://django-csp.readthedocs.io/"
+  - "https://content-security-policy.com/"
+  - "https://owasp.org/www-community/controls/Content_Security_Policy"
+  - "https://csp-evaluator.withgoogle.com/"

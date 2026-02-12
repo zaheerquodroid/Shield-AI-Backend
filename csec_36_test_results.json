@@ -1,0 +1,846 @@
+{
+  "findings": [
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 7,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 10,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 24,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 48,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 62,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 72,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 74,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 13,
+      "matched_code": "eval(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "eval() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 16,
+      "matched_code": "eval(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "eval() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 52,
+      "matched_code": "eval(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "eval() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 20,
+      "matched_code": "compile(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "compile() call without validation (may need analysis)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 23,
+      "matched_code": "compile(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "compile() call without validation (may need analysis)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 37,
+      "matched_code": "__import__(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "__import__() call without validation (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 31,
+      "matched_code": "subprocess.run(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "subprocess call without validation (command injection risk)",
+      "metadata": {
+        "variable_name": "run",
+        "env_var_name": "run",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_unsafe_code_execution.py",
+      "line": 72,
+      "matched_code": "llm.generate...exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "AI-generated code executed directly (needs analysis)",
+      "metadata": {
+        "variable_name": "llm",
+        "env_var_name": "generate",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_safe_code_execution.py",
+      "line": 23,
+      "matched_code": "exec(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "exec() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    },
+    {
+      "pattern_id": "csec_36_missing_code_analysis",
+      "pattern_name": "Missing Static Code Analysis for AI-Generated Scripts",
+      "file": "tests\\test_sample_safe_code_execution.py",
+      "line": 36,
+      "matched_code": "eval(",
+      "language": "python",
+      "severity": "high",
+      "category": "ai_security",
+      "description": "eval() call without static analysis (dangerous)",
+      "metadata": {
+        "variable_name": "UNKNOWN",
+        "env_var_name": "UNKNOWN",
+        "original_fallback": "'default'",
+        "context_analysis": {}
+      },
+      "jira_reference": {
+        "ticket": "CSEC-36",
+        "epic": "CSEC-9",
+        "project": "Coco TestAI Security Remediation"
+      },
+      "fix_strategy": {
+        "approach": "static_code_analysis",
+        "breaking_change": false,
+        "description": "Implement AST-based static code analysis for AI-generated scripts:\n\n1. Parse code with Python ast module\n2. Check for dangerous imports (os, subprocess, socket, etc.)\n3. Check for dangerous built-ins (exec, eval, compile, __import__)\n4. Check file operations (open, read, write, delete)\n5. Check network operations (socket, requests, urllib)\n6. Use configurable allowlist/blocklist\n7. Reject scripts that fail validation\n\nThis is a non-breaking addition that adds safety layer.\n",
+        "phases": [
+          {
+            "name": "analyzer_creation",
+            "duration_days": 1,
+            "description": "Create code_analyzer.py with AST analysis"
+          },
+          {
+            "name": "configuration",
+            "duration_days": 0,
+            "description": "Add allowlist/blocklist to settings"
+          },
+          {
+            "name": "integration",
+            "duration_days": 1,
+            "description": "Integrate analyzer into script execution flow"
+          },
+          {
+            "name": "testing",
+            "duration_days": 1,
+            "description": "Test with malicious and benign scripts"
+          }
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "total_count": 17,
+    "exec_findings": 8,
+    "eval_findings": 4,
+    "compile_findings": 2,
+    "subprocess_findings": 1,
+    "import_findings": 1,
+    "other_findings": 1
+  }
+}
