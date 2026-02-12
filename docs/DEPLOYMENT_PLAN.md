@@ -282,8 +282,14 @@ aws ecs update-service \
 
 ## Security Checklist Before Launch
 
-Before enabling the Chrome extension for public users, complete these security stories (see EXTENSION_LAUNCH_SECURITY.md):
+Before enabling the Chrome extension for public users, complete these requirements (see [EXTENSION_LAUNCH_SECURITY.md](docs/EXTENSION_LAUNCH_SECURITY.md)):
 
+### SHIELD Wrapper (deploy once, protects all apps)
+- [ ] SHIELD-1: WAF & Threat Protection (rate limiting, bot protection)
+- [ ] SHIELD-2: Security Headers (HSTS, CSP, X-Frame-Options)
+- [ ] SHIELD-3: Response Sanitization (error message cleanup)
+
+### CSEC Code Fixes (Coco-specific)
 - [ ] CSEC-18: Remove hardcoded SECRET_KEY fallback
 - [ ] CSEC-19: Change DEBUG to default False
 - [ ] CSEC-20: Change ALLOWED_HOSTS to default empty

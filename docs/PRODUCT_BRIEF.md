@@ -6,6 +6,8 @@
 
 **Version:** 1.0 Draft
 **Date:** 2026-02-09
+**Jira Project:** [SHIELD](https://quodroid.atlassian.net/jira/software/projects/SHIELD/boards) (12 epics, 21 stories)
+**Product Stories:** [SHIELD_AI_PRODUCT_STORIES.md](./SHIELD_AI_PRODUCT_STORIES.md)
 
 ---
 

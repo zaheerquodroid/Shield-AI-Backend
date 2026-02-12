@@ -1,6 +1,10 @@
 # Security Wrapper Implementation Guide
 
-A comprehensive security layer for Coco TestAI using a proxy-based architecture that protects the application without modifying Django code.
+A comprehensive security layer using a proxy-based architecture that protects any web application without modifying application code.
+
+**Jira Projects:**
+- [SHIELD](https://quodroid.atlassian.net/jira/software/projects/SHIELD/boards) — Generic wrapper features (12 epics, 21 stories, ~249h)
+- [CSEC](https://quodroid.atlassian.net/jira/software/projects/CSEC/boards/133) — Coco-specific code fixes (5 epics, ~93h)
 
 ## Table of Contents
 
@@ -1769,18 +1773,20 @@ Automate security scanning in the development workflow.
 |---------|----------|-----------------|
 | PostgreSQL RLS | Database proxy | Django: Set application_name in DB connection |
 
-### Cannot Cover
+### Cannot Cover (Tracked in CSEC Project)
 
-| Finding | Reason |
-|---------|--------|
-| Chrome extension sender validation | Extension JavaScript code |
-| Chrome extension encrypted storage | Extension JavaScript code |
-| Chrome extension tab filtering | Extension JavaScript code |
-| Fernet → AES-256-GCM | Application encryption logic in mfa.py, encryption.py |
-| Remove SECRET_KEY fallback | Code in settings.py:36 |
-| VITE_USER_ID removal | Frontend code |
-| Console.log stripping | Build configuration |
-| Client-side file validation | Frontend code |
+These require application code changes and are tracked in the [CSEC Jira project](https://quodroid.atlassian.net/jira/software/projects/CSEC/boards/133):
+
+| Finding | CSEC Epic | Reason |
+|---------|-----------|--------|
+| Chrome extension sender validation | CSEC-12 | Extension JavaScript code |
+| Chrome extension encrypted storage | CSEC-12 | Extension JavaScript code |
+| Chrome extension tab filtering | CSEC-12 | Extension JavaScript code |
+| Fernet → AES-256-GCM | CSEC-3 | Application encryption logic in mfa.py, encryption.py |
+| Remove SECRET_KEY fallback | CSEC-1 | Code in settings.py:36 |
+| VITE_USER_ID removal | CSEC-13 | Frontend code |
+| Console.log stripping | CSEC-13 | Build configuration |
+| Client-side file validation | CSEC-13 | Frontend code |
 
 ---
 
