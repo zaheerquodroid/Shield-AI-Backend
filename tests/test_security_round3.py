@@ -167,7 +167,6 @@ class TestUserinfoSSRF:
     @pytest.mark.parametrize("url", [
         "http://public.com@169.254.169.254/latest/meta-data/",
         "http://user:pass@127.0.0.1/admin",
-        "http://safe.com%00@10.0.0.1/internal",
         "http://foo@bar@192.168.1.1/",
         "https://legit.com@internal-service/secret",
     ])
@@ -176,6 +175,12 @@ class TestUserinfoSSRF:
         result = validate_origin_url(url)
         assert result is not None, f"@userinfo bypass: {url} was not blocked"
         assert "userinfo" in result.lower() or "@" in result
+
+    def test_null_byte_userinfo_blocked(self):
+        """Null-byte + @userinfo combo blocked (caught by null byte check)."""
+        result = validate_origin_url("http://safe.com%00@10.0.0.1/internal")
+        assert result is not None
+        assert "null byte" in result.lower()
 
     def test_email_like_path_not_blocked(self):
         """@ in path (not netloc) is allowed."""

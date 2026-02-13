@@ -149,23 +149,34 @@ def sanitize_text(text: str, max_length: int = _DEFAULT_MAX_LENGTH) -> str:
     return f"<user_data>{text}</user_data>"
 
 
-def _extract_string_fields(obj, path: str = "") -> list[tuple[str, str]]:
+_MAX_EXTRACT_DEPTH = 64
+
+
+def _extract_string_fields(obj, path: str = "", *, _depth: int = 0) -> list[tuple[str, str]]:
     """Recursively extract all string fields from a JSON-like object.
 
     Returns list of (dotted_path, value) tuples.
+    Enforces a maximum recursion depth to prevent stack overflow from
+    deeply nested JSON payloads (depth bomb DoS).
     """
+    if _depth > _MAX_EXTRACT_DEPTH:
+        return []
     fields = []
     if isinstance(obj, str):
         fields.append((path, obj))
     elif isinstance(obj, dict):
         for key, value in obj.items():
             child_path = f"{path}.{key}" if path else key
-            fields.extend(_extract_string_fields(value, child_path))
+            fields.extend(_extract_string_fields(value, child_path, _depth=_depth + 1))
     elif isinstance(obj, list):
         for i, item in enumerate(obj):
             child_path = f"{path}[{i}]"
-            fields.extend(_extract_string_fields(item, child_path))
+            fields.extend(_extract_string_fields(item, child_path, _depth=_depth + 1))
     return fields
+
+
+# Public alias for reuse by other middleware (e.g. SSRFValidator)
+extract_string_fields = _extract_string_fields
 
 
 def _set_nested_value(obj, path: str, value: str) -> None:

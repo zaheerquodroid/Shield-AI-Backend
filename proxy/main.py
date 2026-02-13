@@ -21,7 +21,7 @@ from proxy.middleware.context_injector import ContextInjector
 from proxy.middleware.llm_sanitizer import LLMSanitizer
 from proxy.middleware.pipeline import MiddlewarePipeline, RequestContext
 from proxy.middleware.rate_limiter import RateLimiter
-from proxy.middleware.request_sanitizer import RequestSanitizer
+from proxy.middleware.ssrf_validator import SSRFValidator
 from proxy.middleware.response_sanitizer import ResponseSanitizer
 from proxy.middleware.router import TenantRouter
 from proxy.middleware.security_headers import SecurityHeaders
@@ -51,7 +51,7 @@ def _build_pipeline() -> MiddlewarePipeline:
     pipeline.add(ContextInjector())    # 2: request ID, headers
     pipeline.add(RateLimiter())        # 3
     pipeline.add(SessionValidator())   # 4
-    pipeline.add(RequestSanitizer())   # 5
+    pipeline.add(SSRFValidator())      # 5: SSRF validation on URL-valued fields
     pipeline.add(LLMSanitizer())       # 6
     pipeline.add(ResponseSanitizer())  # 7
     pipeline.add(SecurityHeaders())    # 8

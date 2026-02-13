@@ -24,6 +24,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "rate_limiting": True,
         "security_headers": True,
         "bot_protection": False,
+        "ssrf_validator": True,
     },
     "settings": {},
 }

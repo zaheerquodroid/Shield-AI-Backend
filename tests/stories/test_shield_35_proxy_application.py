@@ -160,7 +160,7 @@ class TestAC2_MiddlewarePipelineOrder:
             "ContextInjector",
             "RateLimiter",
             "SessionValidator",
-            "RequestSanitizer",
+            "SSRFValidator",
             "LLMSanitizer",
             "ResponseSanitizer",
             "SecurityHeaders",
