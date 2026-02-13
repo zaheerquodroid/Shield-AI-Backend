@@ -144,6 +144,7 @@ async def get_enabled_webhooks_for_event(
     try:
         cid = UUID(customer_id)
     except (ValueError, AttributeError):
+        logger.warning("webhook_invalid_customer_id", customer_id=customer_id)
         return []
     async with pool.acquire() as conn:
         rows = await conn.fetch(

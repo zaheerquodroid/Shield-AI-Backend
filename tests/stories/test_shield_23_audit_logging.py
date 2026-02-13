@@ -336,7 +336,8 @@ class TestAC2_RetentionByPlan:
         mock_conn.execute.assert_called_once()
         args = mock_conn.execute.call_args
         assert "tenant-1" in args[0]
-        assert "30" in args[0]
+        assert "make_interval" in args[0][0]
+        assert 30 in args[0]
 
 
 # ---------------------------------------------------------------------------

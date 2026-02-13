@@ -586,9 +586,9 @@ class TestSecurityEventWebhookIntegration:
             await al.process_response(resp, ctx)
 
         # Audit insert should NOT have been called (audit_skip=True)
-        # But a webhook task should be created for rate_limited
-        # The pending deque should have 1 task (webhook only, no audit)
-        assert len(al._pending) == 1
+        assert len(al._pending) == 0
+        # But a webhook task should be created for rate_limited (separate queue)
+        assert len(al._pending_webhooks) == 1
 
 
 # ===========================================================================

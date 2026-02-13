@@ -40,6 +40,7 @@ async def insert_audit_log(
     """Insert an audit log row. Fire-and-forget: catches all exceptions."""
     pool = get_pool()
     if pool is None:
+        logger.warning("audit_insert_skipped", reason="no db pool", tenant_id=tenant_id)
         return
     try:
         async with pool.acquire() as conn:
@@ -152,15 +153,23 @@ async def query_audit_logs(
 
 
 async def delete_old_audit_logs(tenant_id: str, retention_days: int) -> int:
-    """Delete audit logs older than retention_days for a tenant. Returns count deleted."""
+    """Delete audit logs older than retention_days for a tenant. Returns count deleted.
+
+    Uses make_interval() with an integer parameter to prevent SQL injection
+    via string-concatenated intervals. Validates retention_days > 0 to prevent
+    accidental deletion of all logs (negative values would match future timestamps).
+    """
+    if retention_days < 1:
+        logger.error("audit_retention_invalid_days", tenant_id=tenant_id, days=retention_days)
+        return 0
     pool = get_pool()
     if pool is None:
         return 0
     try:
         async with pool.acquire() as conn:
             result = await conn.execute(
-                "DELETE FROM audit_logs WHERE tenant_id = $1 AND timestamp < now() - ($2 || ' days')::interval",
-                tenant_id, str(retention_days),
+                "DELETE FROM audit_logs WHERE tenant_id = $1 AND timestamp < now() - make_interval(days => $2)",
+                tenant_id, retention_days,
             )
             # result is like "DELETE 42"
             parts = result.split()

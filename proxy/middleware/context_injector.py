@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from proxy.middleware.pipeline import Middleware, RequestContext
+from proxy.utils.sanitize import strip_control_chars
 
 logger = structlog.get_logger()
 
@@ -16,9 +17,12 @@ logger = structlog.get_logger()
 _STRIP_HEADERS = frozenset({
     "x-tenant-id",
     "x-user-id",
+    "x-request-id",
 })
 
 _STRIP_PREFIXES = ("x-shieldai-",)
+
+_MAX_REQUEST_ID_LENGTH = 256
 
 
 class ContextInjector(Middleware):
@@ -35,10 +39,14 @@ class ContextInjector(Middleware):
         # Generate request ID
         new_request_id = uuid4().hex[:8]
 
-        # Preserve original client request ID if present
+        # Preserve original client request ID if present.
+        # Sanitize at storage time (not just at response time) to prevent
+        # log injection if any middleware logs this value.
         client_request_id = request.headers.get("x-request-id")
         if client_request_id:
-            context.extra["original_request_id"] = client_request_id
+            context.extra["original_request_id"] = strip_control_chars(
+                client_request_id[:_MAX_REQUEST_ID_LENGTH]
+            )
 
         # Set our request ID on context
         context.request_id = new_request_id
@@ -84,12 +92,6 @@ class ContextInjector(Middleware):
         """Add context headers to response."""
         response.headers["x-request-id"] = context.request_id
         if context.extra.get("original_request_id"):
-            # Sanitize client-provided value to prevent CRLF header injection
-            safe_value = self._sanitize_header_value(context.extra["original_request_id"])
-            response.headers["x-original-request-id"] = safe_value
+            # Already sanitized at storage time in process_request
+            response.headers["x-original-request-id"] = context.extra["original_request_id"]
         return response
-
-    @staticmethod
-    def _sanitize_header_value(value: str) -> str:
-        """Strip CRLF and null bytes from a header value to prevent injection."""
-        return value.replace("\r", "").replace("\n", "").replace("\x00", "")

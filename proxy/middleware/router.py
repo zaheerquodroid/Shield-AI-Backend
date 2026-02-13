@@ -9,6 +9,7 @@ from starlette.responses import Response
 from proxy.config.customer_config import get_config_service
 from proxy.middleware.pipeline import Middleware, RequestContext
 from proxy.middleware.url_validator import validate_origin_url
+from proxy.utils.sanitize import strip_control_chars
 
 logger = structlog.get_logger()
 
@@ -18,10 +19,10 @@ class TenantRouter(Middleware):
 
     async def process_request(self, request: Request, context: RequestContext) -> Request | Response | None:
         host = request.headers.get("host", "")
-        # Strip port if present, then strip control chars to prevent
-        # CRLF log forging in ConsoleRenderer (dev mode).
+        # Strip port if present, then strip ALL control chars (CRLF, null,
+        # Unicode line separators, bidi overrides) to prevent log forging.
         domain = host.split(":")[0] if host else ""
-        domain = domain.replace("\r", "").replace("\n", "").replace("\x00", "")
+        domain = strip_control_chars(domain)
 
         config_service = get_config_service()
         config = config_service.get_config(domain)

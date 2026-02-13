@@ -32,7 +32,13 @@ _MAX_UA_LENGTH = 1024
 _MAX_PATH_LENGTH = 2048
 _MAX_IP_LENGTH = 45       # IPv6 max = 45 chars
 _MAX_USERID_LENGTH = 255
-_MAX_PENDING_TASKS = 1000
+_MAX_METHOD_LENGTH = 10
+_MAX_APPID_LENGTH = 255
+_MAX_REQUESTID_LENGTH = 64
+_MAX_ACTION_LENGTH = 64
+_MAX_COUNTRY_LENGTH = 8
+_MAX_PENDING_AUDIT_TASKS = 1000
+_MAX_PENDING_WEBHOOK_TASKS = 500
 
 
 def _sanitize(value: str, max_length: int) -> str:
@@ -54,7 +60,8 @@ class AuditLogger(Middleware):
     """
 
     def __init__(self) -> None:
-        self._pending: deque[asyncio.Task] = deque(maxlen=_MAX_PENDING_TASKS)
+        self._pending: deque[asyncio.Task] = deque(maxlen=_MAX_PENDING_AUDIT_TASKS)
+        self._pending_webhooks: deque[asyncio.Task] = deque(maxlen=_MAX_PENDING_WEBHOOK_TASKS)
 
     async def process_request(self, request: Request, context: RequestContext) -> Request | Response | None:
         # Check feature flag — but always capture metadata for webhooks
@@ -111,37 +118,54 @@ class AuditLogger(Middleware):
         # The direct peer IP cannot be spoofed at the TCP level.
         client_ip = context.extra.get("_audit_direct_ip", "")[:45]
 
+        # Truncate all fields to their DB column limits to prevent INSERT
+        # failure (which would silently drop the audit log entry — audit evasion).
+        method = method[:_MAX_METHOD_LENGTH]
+        path = path[:_MAX_PATH_LENGTH]
+        app_id = context.customer_config.get("app_id", "")[:_MAX_APPID_LENGTH]
+        request_id = (context.request_id or "")[:_MAX_REQUESTID_LENGTH]
+        user_agent = context.extra.get("_audit_user_agent", "")
+        country = _sanitize(context.extra.get("country", ""), _MAX_COUNTRY_LENGTH)
+        user_id = (context.user_id or "")[:_MAX_USERID_LENGTH]
+        action = action[:_MAX_ACTION_LENGTH]
+
         # Fire audit insert (only if audit logging is enabled)
         if not context.extra.get("_audit_skip"):
             try:
                 task = asyncio.create_task(
                     insert_audit_log(
                         tenant_id=context.tenant_id,
-                        app_id=context.customer_config.get("app_id", ""),
-                        request_id=context.request_id,
+                        app_id=app_id,
+                        request_id=request_id,
                         timestamp=datetime.now(timezone.utc),
                         method=method,
                         path=path,
                         status_code=status_code,
                         duration_ms=round(duration_ms, 2),
                         client_ip=client_ip,
-                        user_agent=context.extra.get("_audit_user_agent", ""),
-                        country=context.extra.get("country", "")[:8],
-                        user_id=(context.user_id or "")[:_MAX_USERID_LENGTH],
+                        user_agent=user_agent,
+                        country=country,
+                        user_id=user_id,
                         action=action,
                         blocked=is_blocked,
                     )
                 )
-                # Add done callback to suppress "exception never retrieved"
-                # warnings if task is evicted from the bounded deque.
-                task.add_done_callback(lambda t: t.exception() if t.done() and not t.cancelled() else None)
-                if len(self._pending) >= _MAX_PENDING_TASKS:
+                # Done callback: log unexpected exceptions instead of swallowing.
+                def _audit_done(t: asyncio.Task) -> None:
+                    if t.done() and not t.cancelled():
+                        exc = t.exception()
+                        if exc:
+                            logger.error("audit_task_exception", error=str(exc))
+
+                task.add_done_callback(_audit_done)
+                if len(self._pending) >= _MAX_PENDING_AUDIT_TASKS:
                     logger.warning("audit_task_queue_full", dropped=True)
                 self._pending.append(task)
             except Exception:
                 logger.exception("audit_task_create_failed")
 
-        # Dispatch webhook for security events (independent of audit_logging flag)
+        # Dispatch webhook for security events (independent of audit_logging flag).
+        # Uses a SEPARATE bounded queue so slow webhooks cannot evict audit tasks.
         if action in SECURITY_EVENTS:
             try:
                 wh_task = asyncio.create_task(
@@ -151,8 +175,8 @@ class AuditLogger(Middleware):
                         message=f"{action} on {method} {path} (status {status_code})",
                         context={
                             "tenant_id": context.tenant_id,
-                            "app_id": context.customer_config.get("app_id", ""),
-                            "request_id": context.request_id,
+                            "app_id": app_id,
+                            "request_id": request_id,
                             "client_ip": client_ip,
                             "path": path,
                             "method": method,
@@ -160,8 +184,17 @@ class AuditLogger(Middleware):
                         },
                     )
                 )
-                wh_task.add_done_callback(lambda t: t.exception() if t.done() and not t.cancelled() else None)
-                self._pending.append(wh_task)
+
+                def _webhook_done(t: asyncio.Task) -> None:
+                    if t.done() and not t.cancelled():
+                        exc = t.exception()
+                        if exc:
+                            logger.error("webhook_task_exception", error=str(exc))
+
+                wh_task.add_done_callback(_webhook_done)
+                if len(self._pending_webhooks) >= _MAX_PENDING_WEBHOOK_TASKS:
+                    logger.warning("webhook_task_queue_full", dropped=True)
+                self._pending_webhooks.append(wh_task)
             except Exception:
                 logger.exception("webhook_task_create_failed")
 

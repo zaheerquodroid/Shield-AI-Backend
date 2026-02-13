@@ -29,14 +29,20 @@ _CSV_COLUMNS = [
 ]
 
 
+def _strip_control_chars(s: str) -> str:
+    """Strip control characters from a string to prevent ANSI/log injection."""
+    import re
+    return re.sub(r"[\x00-\x1f\x7f-\x9f]", "", s)
+
+
 def _parse_datetime(value: str | None, field_name: str) -> datetime | None:
     if value is None:
         return None
     try:
         return datetime.fromisoformat(value)
     except (ValueError, TypeError):
-        # Truncate reflected input to prevent log spam / info leakage
-        safe_preview = value[:40] + ("..." if len(value) > 40 else "")
+        # Truncate and sanitize reflected input to prevent ANSI/log injection
+        safe_preview = _strip_control_chars(value[:40]) + ("..." if len(value) > 40 else "")
         raise HTTPException(
             status_code=422,
             detail=f"Invalid ISO datetime for {field_name}: {safe_preview!r}",
@@ -54,10 +60,12 @@ def _csv_safe(value: Any) -> str:
     """Sanitize a cell value to prevent CSV formula injection.
 
     Prefixes dangerous values with a single-quote so spreadsheets
-    treat them as text instead of formulas/macros.
+    treat them as text instead of formulas/macros. Strips leading
+    whitespace before checking to prevent bypass via "   =CMD()".
     """
     s = str(value) if value is not None else ""
-    if s and s[0] in _CSV_FORMULA_PREFIXES:
+    stripped = s.lstrip()
+    if stripped and stripped[0] in _CSV_FORMULA_PREFIXES:
         return f"'{s}"
     return s
 

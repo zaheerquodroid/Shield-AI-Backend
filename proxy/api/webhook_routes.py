@@ -45,7 +45,7 @@ def _validate_events(events: list[str]) -> None:
 
 def _validate_webhook_url(url: str) -> None:
     """Validate webhook URL against SSRF. Raises HTTPException on failure."""
-    ssrf_error = validate_origin_url(url)
+    ssrf_error = validate_origin_url(url, strict_dns=True)
     if ssrf_error:
         # Log detailed error server-side, return generic message to client
         logger.warning("webhook_url_ssrf_blocked", url=url, reason=ssrf_error)

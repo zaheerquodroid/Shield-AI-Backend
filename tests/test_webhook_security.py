@@ -69,8 +69,11 @@ class TestSSRFProtection:
         "http://api.example.com/webhook",
     ])
     def test_public_urls_allowed(self, url):
-        """Public URLs are allowed for webhook targets."""
-        result = _validate_webhook_url(url)
+        """Public URLs are allowed for webhook targets (with mocked DNS for test stability)."""
+        # Mock DNS to return a public IP since test env may not resolve these domains
+        with patch("proxy.middleware.url_validator.socket.getaddrinfo",
+                    return_value=[(2, 1, 0, '', ('93.184.216.34', 0))]):
+            result = _validate_webhook_url(url)
         assert result is None, f"Expected {url} to be allowed, got: {result}"
 
     def test_ftp_scheme_blocked(self):
@@ -614,8 +617,9 @@ class TestLoginAttemptWebhookDispatch:
             await al.process_response(resp, ctx)
             await asyncio.sleep(0.01)
 
-        # Should have 2 pending tasks: audit insert + webhook dispatch
-        assert len(al._pending) == 2
+        # Should have 1 audit task in _pending + 1 webhook task in _pending_webhooks
+        assert len(al._pending) == 1
+        assert len(al._pending_webhooks) == 1
 
 
 # ===========================================================================

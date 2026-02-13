@@ -94,16 +94,18 @@ def _sanitize_slack_text(text: str) -> str:
     """Sanitize text for Slack mrkdwn to prevent injection.
 
     Escapes:
-    - @channel, @here, @everyone mentions (prevent notification spam)
+    - @channel, @here, @everyone mentions — case-insensitive (prevent notification spam)
     - <url> link syntax (prevent phishing links)
     - Slack special entities (& < >)
     """
+    import re
     # Escape Slack HTML entities first
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    # Neutralize @-mentions by inserting zero-width space after @
-    text = text.replace("@channel", "@\u200bchannel")
-    text = text.replace("@here", "@\u200bhere")
-    text = text.replace("@everyone", "@\u200beveryone")
+    # Neutralize @-mentions case-insensitively by inserting zero-width space after @
+    _ZWS = "\u200b"
+    text = re.sub(r"@(channel)", f"@{_ZWS}\\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"@(here)", f"@{_ZWS}\\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"@(everyone)", f"@{_ZWS}\\1", text, flags=re.IGNORECASE)
     return text
 
 
@@ -129,6 +131,8 @@ def _format_slack_payload(
     text = f"{severity_emoji} *{event_type.upper()}*: {safe_message}"
     return {
         "text": text,
+        "unfurl_links": False,
+        "unfurl_media": False,
         "blocks": [
             {
                 "type": "section",
@@ -170,8 +174,13 @@ def _format_pagerduty_payload(
 
 
 def _validate_webhook_url(url: str) -> str | None:
-    """Validate webhook URL against SSRF. Returns error message or None."""
-    return validate_origin_url(url)
+    """Validate webhook URL against SSRF. Returns error message or None.
+
+    Uses strict_dns=True so DNS resolution failure blocks the URL (fail-closed).
+    This prevents DNS rebinding attacks where the attacker's DNS server
+    intermittently fails to avoid validation.
+    """
+    return validate_origin_url(url, strict_dns=True)
 
 
 async def dispatch_webhook_event(
@@ -236,7 +245,13 @@ async def dispatch_webhook_event(
             if secret and provider != "pagerduty":
                 headers["X-ShieldAI-Signature"] = _sign_payload(payload_bytes, secret)
 
-            await client.post(url, content=payload_bytes, headers=headers)
+            resp = await client.post(url, content=payload_bytes, headers=headers)
+            if resp.status_code >= 400:
+                logger.warning(
+                    "webhook_delivery_failed",
+                    webhook_id=str(wh["id"]),
+                    status_code=resp.status_code,
+                )
 
         except Exception:
             logger.exception(

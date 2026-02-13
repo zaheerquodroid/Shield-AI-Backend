@@ -369,11 +369,15 @@ class TestCRLFInjection:
         assert "\x00" not in original_id
 
     def test_sanitize_header_value_method(self):
-        """_sanitize_header_value strips CRLF and null bytes."""
-        assert ContextInjector._sanitize_header_value("foo\r\nbar") == "foobar"
-        assert ContextInjector._sanitize_header_value("foo\x00bar") == "foobar"
-        assert ContextInjector._sanitize_header_value("normal-value") == "normal-value"
-        assert ContextInjector._sanitize_header_value("a\r\nb\nc\rd\x00e") == "abcde"
+        """strip_control_chars strips CRLF, null bytes, and Unicode control chars."""
+        from proxy.utils.sanitize import strip_control_chars
+        assert strip_control_chars("foo\r\nbar") == "foobar"
+        assert strip_control_chars("foo\x00bar") == "foobar"
+        assert strip_control_chars("normal-value") == "normal-value"
+        assert strip_control_chars("a\r\nb\nc\rd\x00e") == "abcde"
+        # Also strips Unicode line separators and bidi overrides
+        assert strip_control_chars("test\u2028line") == "testline"
+        assert strip_control_chars("test\u202eRTL") == "testRTL"
 
 
 # ══════════════════════════════════════════════════════════════════════
