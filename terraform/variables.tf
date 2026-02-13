@@ -129,3 +129,23 @@ variable "permissions_policy" {
   type        = string
   default     = "camera=(), microphone=(), geolocation=(self), payment=()"
 }
+
+# --- Secrets management variables ---
+
+variable "secrets_rotation_days" {
+  description = "Automatic rotation period for secrets in days (0 = disabled)"
+  type        = number
+  default     = 0
+}
+
+variable "secrets_rotation_lambda_arn" {
+  description = "ARN of the Lambda function for secret rotation"
+  type        = string
+  default     = ""
+}
+
+variable "secrets_kms_deletion_window" {
+  description = "KMS key deletion window in days (7-30)"
+  type        = number
+  default     = 14
+}

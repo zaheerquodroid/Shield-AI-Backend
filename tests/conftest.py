@@ -18,11 +18,14 @@ def _mock_settings(monkeypatch):
     monkeypatch.setenv("PROXY_LOG_JSON", "false")
     monkeypatch.setenv("PROXY_LOG_LEVEL", "debug")
 
-    # Reset cached settings
+    # Reset cached settings and secrets singleton
     import proxy.config.loader as loader
+    import proxy.config.secrets as secrets_mod
     loader._settings = None
+    secrets_mod._provider = None
     yield
     loader._settings = None
+    secrets_mod._provider = None
 
 
 @pytest.fixture

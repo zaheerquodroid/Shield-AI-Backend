@@ -82,6 +82,10 @@ class ProxySettings(BaseSettings):
     upstream_max_keepalive: int = 20
     upstream_follow_redirects: bool = False
 
+    # Secrets management
+    secrets_provider: str = "env"
+    secrets_cache_ttl: int = 300
+
 _settings: ProxySettings | None = None
 
 
@@ -96,8 +100,35 @@ def get_settings() -> ProxySettings:
 def load_settings() -> ProxySettings:
     """Load settings from env vars (env vars override model defaults)."""
     global _settings
-    _settings = ProxySettings()
-    logger.info("config_loaded", upstream_url=_settings.upstream_url, port=_settings.listen_port)
+
+    # SECURITY: Build new settings in a local var, resolve secrets,
+    # then atomically swap the global. This prevents a TOCTOU window
+    # where get_settings() could see partially-initialized state
+    # (env values without secret overrides) during SIGHUP reloads.
+    new_settings = ProxySettings()
+
+    # Resolve secrets from external provider
+    from proxy.config.secrets import init_provider, resolve_settings
+
+    try:
+        provider = init_provider(new_settings.secrets_provider, new_settings.secrets_cache_ttl)
+        if provider is not None:
+            resolve_settings(new_settings, provider)
+    except Exception as exc:
+        # SECURITY: Do NOT use exc_info=True. Tracebacks from secrets
+        # SDK exceptions can contain raw secret values.
+        logger.error(
+            "secrets_init_failed",
+            error_type=type(exc).__name__,
+        )
+
+    logger.info(
+        "config_loaded",
+        upstream_url=new_settings.upstream_url,
+        port=new_settings.listen_port,
+        secrets_provider=new_settings.secrets_provider,
+    )
+    _settings = new_settings  # atomic swap
     return _settings
 
 

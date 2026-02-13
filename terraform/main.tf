@@ -77,3 +77,15 @@ module "security_headers" {
   csp_policy         = var.csp_policy
   permissions_policy = var.permissions_policy
 }
+
+# ---------------------------------------------------------------------------
+# Secrets Module — AWS Secrets Manager with KMS encryption
+# ---------------------------------------------------------------------------
+module "secrets" {
+  source = "./modules/secrets"
+
+  environment         = var.environment
+  rotation_days       = var.secrets_rotation_days
+  rotation_lambda_arn = var.secrets_rotation_lambda_arn
+  kms_deletion_window = var.secrets_kms_deletion_window
+}
