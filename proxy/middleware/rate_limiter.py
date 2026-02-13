@@ -18,6 +18,33 @@ logger = structlog.get_logger()
 # Redis key prefix
 _KEY_PREFIX = "ratelimit"
 
+# Atomic Lua script: cleanup + count + conditional add in one operation.
+# Eliminates the TOCTOU race between count check and increment.
+# Returns [current_count, was_added (0 or 1)]
+_RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local window_start = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local max_requests = tonumber(ARGV[3])
+local member = ARGV[4]
+local ttl = tonumber(ARGV[5])
+
+-- Phase 1: cleanup expired entries
+redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
+
+-- Phase 2: count current window
+local count = redis.call('ZCARD', key)
+
+-- Phase 3: conditionally add if under limit
+if count < max_requests then
+    redis.call('ZADD', key, now, member)
+    redis.call('EXPIRE', key, ttl)
+    return {count, 1}
+end
+
+return {count, 0}
+"""
+
 
 class RateLimiter(Middleware):
     """Sliding-window rate limiter backed by Redis sorted sets.
@@ -25,7 +52,8 @@ class RateLimiter(Middleware):
     - Auth endpoints: lower threshold (default 500/5min)
     - Global: higher threshold (default 2000/5min)
     - Per-customer overrides via settings JSONB
-    - Graceful degradation if Redis is unavailable
+    - Fail-closed when Redis is unavailable (returns 503)
+    - Atomic check+increment via Lua script (no TOCTOU race)
     - Injects X-RateLimit-* response headers
     """
 
@@ -37,8 +65,13 @@ class RateLimiter(Middleware):
 
         redis = get_redis()
         if redis is None:
-            logger.warning("rate_limiter_no_redis", action="pass_through")
-            return None
+            # Fail-closed: no rate limiting backend = reject requests
+            logger.error("rate_limiter_no_redis", action="fail_closed")
+            return Response(
+                content='{"error": "Service temporarily unavailable"}',
+                status_code=503,
+                media_type="application/json",
+            )
 
         settings = get_settings()
         path = request.url.path
@@ -62,58 +95,65 @@ class RateLimiter(Middleware):
 
         now = time.time()
         window_start = now - window
+        member = f"{now}:{context.request_id}"
 
-        # Phase 1: cleanup expired entries and count current window
+        # Atomic rate-limit check via Lua script (eliminates TOCTOU race)
         try:
-            pipe = redis.pipeline()
-            pipe.zremrangebyscore(key, 0, window_start)
-            pipe.zcard(key)
-            results = await pipe.execute()
-            current_count = results[1]
+            result = await redis.eval(
+                _RATE_LIMIT_LUA,
+                1,  # number of keys
+                key,
+                str(window_start),
+                str(now),
+                str(max_requests),
+                member,
+                str(int(window) + 1),
+            )
+            current_count = int(result[0])
+            was_added = int(result[1])
         except Exception as exc:
-            logger.warning("rate_limiter_redis_error", error=str(exc), action="pass_through")
+            # Fail-closed: Redis error = reject requests
+            logger.error("rate_limiter_redis_error", error=str(exc), action="fail_closed")
+            return Response(
+                content='{"error": "Service temporarily unavailable"}',
+                status_code=503,
+                media_type="application/json",
+            )
+
+        if was_added:
+            # Request allowed
+            remaining = max(0, max_requests - current_count - 1)
+            context.extra["rate_limit_max"] = max_requests
+            context.extra["rate_limit_remaining"] = remaining
+            context.extra["rate_limit_reset"] = int(now + window)
             return None
 
-        # Store rate-limit info for response headers
-        # current_count is BEFORE adding this request; after adding, remaining decreases by 1
-        remaining = max(0, max_requests - current_count - 1)
+        # Rate limited
+        retry_after = int(window)
+        logger.warning(
+            "rate_limit_exceeded",
+            tenant_id=tenant_id,
+            limit_type=limit_type,
+            current=current_count,
+            max=max_requests,
+            request_id=context.request_id,
+        )
+
         context.extra["rate_limit_max"] = max_requests
-        context.extra["rate_limit_remaining"] = remaining
+        context.extra["rate_limit_remaining"] = 0
         context.extra["rate_limit_reset"] = int(now + window)
 
-        if current_count >= max_requests:
-            # Blocked — do NOT add to sorted set (prevents counter inflation)
-            retry_after = int(window)
-            logger.warning(
-                "rate_limit_exceeded",
-                tenant_id=tenant_id,
-                limit_type=limit_type,
-                current=current_count,
-                max=max_requests,
-                request_id=context.request_id,
-            )
-            return Response(
-                content='{"error": "Rate limit exceeded"}',
-                status_code=429,
-                media_type="application/json",
-                headers={
-                    "Retry-After": str(retry_after),
-                    "X-RateLimit-Limit": str(max_requests),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(int(now + window)),
-                },
-            )
-
-        # Phase 2: request allowed — record it and set TTL
-        try:
-            pipe = redis.pipeline()
-            pipe.zadd(key, {f"{now}:{context.request_id}": now})
-            pipe.expire(key, window + 1)
-            await pipe.execute()
-        except Exception as exc:
-            logger.warning("rate_limiter_track_error", error=str(exc))
-
-        return None
+        return Response(
+            content='{"error": "Rate limit exceeded"}',
+            status_code=429,
+            media_type="application/json",
+            headers={
+                "Retry-After": str(retry_after),
+                "X-RateLimit-Limit": str(max_requests),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(now + window)),
+            },
+        )
 
     async def process_response(self, response: Response, context: RequestContext) -> Response:
         """Inject X-RateLimit-* headers into successful responses."""

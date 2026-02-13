@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import re
 
-# Regex patterns that identify authentication endpoints (case-insensitive)
+# Regex patterns that identify authentication endpoints (case-insensitive).
+# Anchored to path-segment boundaries (preceded by /) and end-of-path or /
+# to avoid matching unrelated paths like /blog/uplogin-tips or /session-info.
 AUTH_PATH_PATTERNS: list[re.Pattern] = [
-    re.compile(r"/auth/", re.IGNORECASE),
-    re.compile(r"/login", re.IGNORECASE),
-    re.compile(r"/signup", re.IGNORECASE),
-    re.compile(r"/register", re.IGNORECASE),
-    re.compile(r"/token", re.IGNORECASE),
-    re.compile(r"/oauth/", re.IGNORECASE),
-    re.compile(r"/password", re.IGNORECASE),
-    re.compile(r"/session", re.IGNORECASE),
+    re.compile(r"(?:^|/)auth(?:/|$)", re.IGNORECASE),
+    re.compile(r"(?:^|/)login(?:/|$)", re.IGNORECASE),
+    re.compile(r"(?:^|/)signup(?:/|$)", re.IGNORECASE),
+    re.compile(r"(?:^|/)register(?:/|$)", re.IGNORECASE),
+    re.compile(r"(?:^|/)token(?:/|$)", re.IGNORECASE),
+    re.compile(r"(?:^|/)oauth(?:/|$)", re.IGNORECASE),
+    re.compile(r"(?:^|/)password(?:/|$)", re.IGNORECASE),
+    re.compile(r"(?:^|/)sessions?(?:/|$)", re.IGNORECASE),
 ]
 
 # Default thresholds

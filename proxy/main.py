@@ -16,6 +16,7 @@ from proxy.health import close_health_client, router as health_router
 from proxy.logging_config import setup_logging
 from proxy.middleware.audit_logger import AuditLogger
 from proxy.middleware.context_injector import ContextInjector
+from proxy.middleware.llm_sanitizer import LLMSanitizer
 from proxy.middleware.pipeline import MiddlewarePipeline, RequestContext
 from proxy.middleware.rate_limiter import RateLimiter
 from proxy.middleware.request_sanitizer import RequestSanitizer
@@ -41,6 +42,7 @@ def _build_pipeline() -> MiddlewarePipeline:
     pipeline.add(RateLimiter())
     pipeline.add(SessionValidator())
     pipeline.add(RequestSanitizer())
+    pipeline.add(LLMSanitizer())
     pipeline.add(ResponseSanitizer())
     pipeline.add(SecurityHeaders())
     pipeline.add(AuditLogger())
@@ -133,6 +135,9 @@ async def proxy_request(request: Request, path: str) -> Response:
     if _pipeline:
         short_circuit = await _pipeline.process_request(request, context)
         if short_circuit is not None:
+            # Short-circuit responses still need response pipeline
+            # (security headers, audit logging, response sanitization)
+            short_circuit = await _pipeline.process_response(short_circuit, context)
             return short_circuit
 
     # Determine upstream URL — use customer config if available, else default
@@ -170,12 +175,25 @@ async def proxy_request(request: Request, path: str) -> Response:
     if len(body) > settings.max_body_bytes:
         return Response(content="Request body too large", status_code=413)
 
+    # Use modified body if middleware (e.g. LLM sanitizer) rewrote it
+    upstream_body = context.extra.get("modified_body", body)
+
+    # Fix Content-Length if body was modified by middleware
+    if "modified_body" in context.extra:
+        if isinstance(upstream_body, bytes):
+            headers["content-length"] = str(len(upstream_body))
+        elif isinstance(upstream_body, str):
+            headers["content-length"] = str(len(upstream_body.encode()))
+        else:
+            headers.pop("content-length", None)
+            headers.pop("Content-Length", None)
+
     try:
         upstream_resp = await _http_client.request(
             method=request.method,
             url=upstream_url,
             headers=headers,
-            content=body,
+            content=upstream_body,
         )
     except httpx.TimeoutException:
         logger.error("upstream_timeout", url=upstream_url, request_id=context.request_id)
@@ -186,6 +204,30 @@ async def proxy_request(request: Request, path: str) -> Response:
     except httpx.HTTPError as exc:
         logger.error("upstream_error", url=upstream_url, request_id=context.request_id, error=str(exc))
         return Response(content="Upstream error", status_code=502)
+
+    # Check response body size — prevent OOM from malicious/compromised upstream
+    resp_content_length = upstream_resp.headers.get("content-length")
+    if resp_content_length:
+        try:
+            if int(resp_content_length) > settings.max_body_bytes:
+                logger.error(
+                    "upstream_response_too_large",
+                    content_length=resp_content_length,
+                    max=settings.max_body_bytes,
+                    request_id=context.request_id,
+                )
+                return Response(content="Upstream response too large", status_code=502)
+        except (ValueError, OverflowError):
+            pass
+    # Also check actual content size (Content-Length may be missing or wrong)
+    if len(upstream_resp.content) > settings.max_body_bytes:
+        logger.error(
+            "upstream_response_too_large",
+            actual_size=len(upstream_resp.content),
+            max=settings.max_body_bytes,
+            request_id=context.request_id,
+        )
+        return Response(content="Upstream response too large", status_code=502)
 
     # Build response headers — filter hop-by-hop
     response_headers = {}

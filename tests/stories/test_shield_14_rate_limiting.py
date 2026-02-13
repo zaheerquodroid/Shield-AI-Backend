@@ -52,28 +52,20 @@ def _make_context(
     return ctx
 
 
-def _mock_redis(current_count: int = 0):
-    """Create a mock Redis that returns current_count from ZCARD."""
-    call_count = 0
+def _mock_redis(current_count: int = 0, max_requests: int | None = None):
+    """Create a mock Redis that simulates the atomic Lua rate-limit script.
 
-    async def _execute():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Phase 1: zremrangebyscore + zcard
-            return [0, current_count]
-        # Phase 2: zadd + expire
-        return [1, True]
-
-    mock_pipe = MagicMock()
-    mock_pipe.zremrangebyscore = MagicMock()
-    mock_pipe.zcard = MagicMock()
-    mock_pipe.zadd = MagicMock()
-    mock_pipe.expire = MagicMock()
-    mock_pipe.execute = _execute
+    The Lua script returns [current_count, was_added (1 if under limit, 0 if over)].
+    """
+    async def _eval(script, num_keys, *args):
+        # args: key, window_start, now, max_requests_str, member, ttl
+        limit = int(args[3]) if len(args) > 3 else (max_requests or 2000)
+        if current_count < limit:
+            return [current_count, 1]  # allowed
+        return [current_count, 0]  # blocked
 
     redis = MagicMock()
-    redis.pipeline = MagicMock(return_value=mock_pipe)
+    redis.eval = _eval
     return redis
 
 
@@ -237,8 +229,8 @@ class TestAC3_429Response:
         assert result.headers["Retry-After"] == "300"
 
     @pytest.mark.asyncio
-    async def test_redis_down_allows_request(self):
-        """When Redis is unavailable, requests pass through (graceful degradation)."""
+    async def test_redis_down_fails_closed(self):
+        """When Redis is unavailable, requests are rejected (fail-closed)."""
         limiter = RateLimiter()
         ctx = _make_context()
         req = _make_request("/auth/login")
@@ -246,7 +238,8 @@ class TestAC3_429Response:
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=None):
             result = await limiter.process_request(req, ctx)
 
-        assert result is None  # allowed
+        assert result is not None
+        assert result.status_code == 503
 
     @pytest.mark.asyncio
     async def test_feature_flag_off_skips_rate_limiting(self):

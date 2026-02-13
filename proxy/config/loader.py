@@ -65,6 +65,15 @@ class ProxySettings(BaseSettings):
     # Request body limit (10MB default)
     max_body_bytes: int = 10 * 1024 * 1024
 
+    # Response sanitizer: "sanitize" (default), "log_only", "passthrough"
+    response_sanitizer_mode: str = "sanitize"
+
+    # Session management
+    session_idle_timeout: int = 1800  # 30 minutes
+    session_absolute_timeout: int = 86400  # 24 hours
+    session_cookie_name: str = "shield_session"
+    session_binding_mode: str = "warn"  # "off", "warn", "strict"
+
     # HTTP client settings
     upstream_max_connections: int = 100
     upstream_max_keepalive: int = 20

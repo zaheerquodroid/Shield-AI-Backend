@@ -961,13 +961,13 @@ Internet → Edge Platform (CloudFront SaaS / Cloudflare) → WAF + Headers → 
 |--------|-------|-------|-----------|
 | Sprint 1 | SHIELD-34 (Proxy Foundation) | ~47 | Core proxy platform running — middleware pipeline, config system, deployment |
 | Sprint 2 | SHIELD-1, SHIELD-2 | ~44 | Edge security live — WAF + headers protect all apps |
-| Sprint 3 | SHIELD-40 (CloudFront SaaS Manager) | ~12 | Multi-tenant edge platform — customer domains get WAF + headers automatically |
-| Sprint 4 | SHIELD-3 | ~15 | Response sanitization live — error leaks eliminated |
-| Sprint 5 | SHIELD-5, SHIELD-4 (Story 4.1) | ~29 | Session management + LLM protection live |
-| Sprint 6 | SHIELD-6 | ~26.5 | Audit logging live — compliance ready |
-| Sprint 7 | SHIELD-4 (4.2, 4.3), SHIELD-8 | ~26 | SSRF/callback protection + secrets management |
-| Sprint 8 | SHIELD-7 | ~19 | Database RLS live — tenant isolation enforced |
-| Sprint 9 | SHIELD-41, SHIELD-42, SHIELD-9 | ~38 | Customer onboarding automation + Cloudflare module + K8s hardening |
+| Sprint 3 | SHIELD-3 (Response Sanitization) | ~15 | Response sanitization live — error leaks eliminated |
+| Sprint 4 | SHIELD-5, SHIELD-4 (Story 4.1) | ~29 | Session management + LLM protection live |
+| Sprint 5 | SHIELD-6 | ~26.5 | Audit logging live — compliance ready |
+| Sprint 6 | SHIELD-4 (4.2, 4.3), SHIELD-8 | ~26 | Request validation + secrets management |
+| Sprint 7 | SHIELD-7 | ~19 | Database RLS live — tenant isolation enforced |
+| Sprint 8 | SHIELD-40, SHIELD-9 | ~31 | Edge platform + container hardening |
+| Sprint 9 | SHIELD-41, SHIELD-42 | ~19 | Customer onboarding automation + Cloudflare module |
 | Sprint 10 | SHIELD-10, SHIELD-11 | ~24.5 | CI/CD templates + SBOM launched |
 | Sprint 11 | SHIELD-12 | ~45.5 | Policy templates — enterprise feature complete |
 

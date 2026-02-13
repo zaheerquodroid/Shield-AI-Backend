@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 import redis.asyncio as aioredis
 import structlog
 
 logger = structlog.get_logger()
+
+# Pattern to redact passwords from Redis URLs
+_REDIS_URL_PASSWORD = re.compile(r"(redis://[^:]*:)[^@]+(@)")
+
+
+def _redact_url(url: str) -> str:
+    """Redact password from Redis URL for safe logging."""
+    return _REDIS_URL_PASSWORD.sub(r"\1***\2", url)
 
 _pool: aioredis.Redis | None = None
 _MAX_RETRIES = 5
@@ -26,7 +35,7 @@ async def init_redis(url: str, pool_size: int = 10) -> aioredis.Redis:
                 socket_connect_timeout=5,
             )
             await _pool.ping()
-            logger.info("redis_connected", url=url, pool_size=pool_size)
+            logger.info("redis_connected", url=_redact_url(url), pool_size=pool_size)
             return _pool
         except (aioredis.ConnectionError, OSError) as exc:
             delay = _BASE_DELAY * (2 ** (attempt - 1))

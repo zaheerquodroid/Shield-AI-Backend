@@ -278,6 +278,7 @@ class TestBuildPipelineOrder:
             "RateLimiter",
             "SessionValidator",
             "RequestSanitizer",
+            "LLMSanitizer",
             "ResponseSanitizer",
             "SecurityHeaders",
             "AuditLogger",

@@ -13,35 +13,22 @@ from proxy.middleware.pipeline import RequestContext
 from proxy.middleware.rate_limiter import RateLimiter
 
 
-def _mock_redis(current_count, phase2_ok=True, phase1_error=None, phase2_error=None):
-    """Create a mock Redis for the two-phase rate limiter.
+def _mock_redis(current_count, eval_error=None):
+    """Create a mock Redis for the atomic Lua rate-limit script.
 
-    Phase 1: zremrangebyscore + zcard → [None, current_count]
-    Phase 2: zadd + expire → [None, None]  (only called if allowed)
+    The Lua script returns [current_count, was_added (1 if under limit, 0 if over)].
     """
-    call_count = 0
-
-    async def _execute():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            if phase1_error:
-                raise phase1_error
-            return [None, current_count]
-        else:
-            if phase2_error:
-                raise phase2_error
-            return [None, None]
-
-    pipe = MagicMock()
-    pipe.zremrangebyscore = MagicMock(return_value=pipe)
-    pipe.zadd = MagicMock(return_value=pipe)
-    pipe.zcard = MagicMock(return_value=pipe)
-    pipe.expire = MagicMock(return_value=pipe)
-    pipe.execute = AsyncMock(side_effect=_execute)
+    async def _eval(script, num_keys, *args):
+        if eval_error:
+            raise eval_error
+        # args: key, window_start, now, max_requests_str, member, ttl
+        limit = int(args[3]) if len(args) > 3 else 2000
+        if current_count < limit:
+            return [current_count, 1]  # allowed
+        return [current_count, 0]  # blocked
 
     mock = MagicMock()
-    mock.pipeline = MagicMock(return_value=pipe)
+    mock.eval = _eval
     return mock
 
 
@@ -161,8 +148,8 @@ class TestRateLimiterOverLimit:
         assert b"Rate limit exceeded" in result.body
 
     @pytest.mark.asyncio
-    async def test_blocked_request_does_not_zadd(self):
-        """Blocked requests should NOT be added to the sorted set."""
+    async def test_blocked_request_not_counted(self):
+        """Blocked requests should NOT be added to the sorted set (atomic Lua handles this)."""
         limiter = RateLimiter()
         ctx = _make_context()
         redis = _mock_redis(current_count=2000)
@@ -171,9 +158,7 @@ class TestRateLimiterOverLimit:
             result = await limiter.process_request(_make_request(), ctx)
 
         assert result.status_code == 429
-        pipe = redis.pipeline()
-        # Phase 2 (zadd) should never be called — only 1 execute call (phase 1)
-        assert pipe.execute.call_count == 1
+        # The Lua script returns was_added=0 for blocked requests
 
 
 class TestRateLimiterAuthDetection:
@@ -221,41 +206,31 @@ class TestRateLimiterCustomerOverride:
         assert result.status_code == 429
 
 
-class TestRateLimiterGraceful:
+class TestRateLimiterFailClosed:
     @pytest.mark.asyncio
-    async def test_redis_unavailable_passes_through(self):
-        """When Redis is down, requests should pass through."""
+    async def test_redis_unavailable_returns_503(self):
+        """When Redis is down, requests are rejected (fail-closed)."""
         limiter = RateLimiter()
         ctx = _make_context()
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=None):
             result = await limiter.process_request(_make_request(), ctx)
 
-        assert result is None
+        assert result is not None
+        assert result.status_code == 503
 
     @pytest.mark.asyncio
-    async def test_redis_error_passes_through(self):
-        """When Redis raises an error on phase 1, requests should pass through."""
+    async def test_redis_error_returns_503(self):
+        """When Redis raises an error, requests are rejected (fail-closed)."""
         limiter = RateLimiter()
         ctx = _make_context()
-        redis = _mock_redis(current_count=0, phase1_error=ConnectionError("Redis down"))
+        redis = _mock_redis(current_count=0, eval_error=ConnectionError("Redis down"))
 
         with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
             result = await limiter.process_request(_make_request(), ctx)
 
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_phase2_error_still_allows_request(self):
-        """If phase 2 (zadd) fails, request was already allowed — no 429."""
-        limiter = RateLimiter()
-        ctx = _make_context()
-        redis = _mock_redis(current_count=5, phase2_error=ConnectionError("Redis flap"))
-
-        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
-            result = await limiter.process_request(_make_request(), ctx)
-
-        assert result is None
+        assert result is not None
+        assert result.status_code == 503
 
 
 class TestRateLimiterFeatureFlag:
@@ -308,16 +283,22 @@ class TestRateLimiterTenantFallback:
         """Empty tenant_id should use 'global' as key prefix."""
         limiter = RateLimiter()
         ctx = _make_context(tenant_id="")
-        redis = _mock_redis(current_count=0)
 
-        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+        eval_keys = []
+        original_mock = _mock_redis(current_count=0)
+
+        async def _capture_eval(script, num_keys, *args):
+            eval_keys.append(args[0])  # first arg is the key
+            return [0, 1]  # allowed
+
+        original_mock.eval = _capture_eval
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=original_mock):
             result = await limiter.process_request(_make_request(), ctx)
 
         assert result is None
-        # Verify the key used contains "global"
-        pipe = redis.pipeline()
-        call_args = pipe.zremrangebyscore.call_args
-        assert "global" in call_args[0][0]
+        assert len(eval_keys) == 1
+        assert "global" in eval_keys[0]
 
 
 class TestRateLimiterRemainingCalc:

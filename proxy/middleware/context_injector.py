@@ -82,5 +82,12 @@ class ContextInjector(Middleware):
         """Add context headers to response."""
         response.headers["x-request-id"] = context.request_id
         if context.extra.get("original_request_id"):
-            response.headers["x-original-request-id"] = context.extra["original_request_id"]
+            # Sanitize client-provided value to prevent CRLF header injection
+            safe_value = self._sanitize_header_value(context.extra["original_request_id"])
+            response.headers["x-original-request-id"] = safe_value
         return response
+
+    @staticmethod
+    def _sanitize_header_value(value: str) -> str:
+        """Strip CRLF and null bytes from a header value to prevent injection."""
+        return value.replace("\r", "").replace("\n", "").replace("\x00", "")
