@@ -18,8 +18,10 @@ class TenantRouter(Middleware):
 
     async def process_request(self, request: Request, context: RequestContext) -> Request | Response | None:
         host = request.headers.get("host", "")
-        # Strip port if present
+        # Strip port if present, then strip control chars to prevent
+        # CRLF log forging in ConsoleRenderer (dev mode).
         domain = host.split(":")[0] if host else ""
+        domain = domain.replace("\r", "").replace("\n", "").replace("\x00", "")
 
         config_service = get_config_service()
         config = config_service.get_config(domain)

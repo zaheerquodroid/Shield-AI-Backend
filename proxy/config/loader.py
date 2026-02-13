@@ -68,6 +68,9 @@ class ProxySettings(BaseSettings):
     # Response sanitizer: "sanitize" (default), "log_only", "passthrough"
     response_sanitizer_mode: str = "sanitize"
 
+    # Audit logging
+    audit_retention_cleanup_interval: int = 3600  # seconds between retention cleanup runs
+
     # Session management
     session_idle_timeout: int = 1800  # 30 minutes
     session_absolute_timeout: int = 86400  # 24 hours

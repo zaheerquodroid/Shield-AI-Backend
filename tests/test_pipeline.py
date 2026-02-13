@@ -274,6 +274,7 @@ class TestBuildPipelineOrder:
 
         assert names == [
             "TenantRouter",
+            "AuditLogger",
             "ContextInjector",
             "RateLimiter",
             "SessionValidator",
@@ -281,7 +282,6 @@ class TestBuildPipelineOrder:
             "LLMSanitizer",
             "ResponseSanitizer",
             "SecurityHeaders",
-            "AuditLogger",
             "SessionUpdater",
         ]
 

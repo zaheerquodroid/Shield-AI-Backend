@@ -43,6 +43,14 @@ class ContextInjector(Middleware):
         # Set our request ID on context
         context.request_id = new_request_id
 
+        # Bind request_id and tenant_id to structlog contextvars so all
+        # subsequent log entries within this request include them.
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=new_request_id,
+            tenant_id=context.tenant_id or "",
+        )
+
         # Strip spoofed headers — we track which ones to strip so the proxy
         # handler knows not to forward them. Store in context for main.py.
         stripped = set()
@@ -65,14 +73,8 @@ class ContextInjector(Middleware):
         # Set X-Forwarded-Proto
         context.extra["x_forwarded_proto"] = request.url.scheme
 
-        # If session context has tenant/user, inject them
-        # (These would be set by SessionValidator in later sprints)
-        # For now, we just store whatever is on the context
-
         logger.debug(
             "context_injected",
-            request_id=new_request_id,
-            tenant_id=context.tenant_id,
             client_ip=client_ip,
         )
 

@@ -156,6 +156,7 @@ class TestAC2_MiddlewarePipelineOrder:
         names = [mw.name for mw in pipeline._middleware]
         assert names == [
             "TenantRouter",
+            "AuditLogger",
             "ContextInjector",
             "RateLimiter",
             "SessionValidator",
@@ -163,7 +164,6 @@ class TestAC2_MiddlewarePipelineOrder:
             "LLMSanitizer",
             "ResponseSanitizer",
             "SecurityHeaders",
-            "AuditLogger",
             "SessionUpdater",
         ]
 

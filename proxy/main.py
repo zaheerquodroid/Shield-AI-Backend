@@ -14,7 +14,9 @@ from fastapi.responses import Response, StreamingResponse
 from proxy.config.loader import get_settings, load_settings, register_reload_handler
 from proxy.health import close_health_client, router as health_router
 from proxy.logging_config import setup_logging
+from proxy.config.webhook import close_webhook_client
 from proxy.middleware.audit_logger import AuditLogger
+from proxy.middleware.audit_retention import run_retention_cleanup
 from proxy.middleware.context_injector import ContextInjector
 from proxy.middleware.llm_sanitizer import LLMSanitizer
 from proxy.middleware.pipeline import MiddlewarePipeline, RequestContext
@@ -26,34 +28,41 @@ from proxy.middleware.security_headers import SecurityHeaders
 from proxy.middleware.session_updater import SessionUpdater
 from proxy.middleware.session_validator import SessionValidator
 from proxy.store import redis as redis_store
+from proxy.store import postgres as pg_store
 
 logger = structlog.get_logger()
 
 _http_client: httpx.AsyncClient | None = None
 _pipeline: MiddlewarePipeline | None = None
 _shutdown_event = asyncio.Event()
+_retention_task: asyncio.Task | None = None
 
 
 def _build_pipeline() -> MiddlewarePipeline:
-    """Build the ordered middleware pipeline."""
+    """Build the ordered middleware pipeline.
+
+    AuditLogger at position 1 (after TenantRouter):
+    - process_request always runs (captures timing even when later middleware short-circuits)
+    - process_response runs near last in reverse order (sees final status code)
+    """
     pipeline = MiddlewarePipeline()
-    pipeline.add(TenantRouter())
-    pipeline.add(ContextInjector())
-    pipeline.add(RateLimiter())
-    pipeline.add(SessionValidator())
-    pipeline.add(RequestSanitizer())
-    pipeline.add(LLMSanitizer())
-    pipeline.add(ResponseSanitizer())
-    pipeline.add(SecurityHeaders())
-    pipeline.add(AuditLogger())
-    pipeline.add(SessionUpdater())
+    pipeline.add(TenantRouter())       # 0: resolve tenant config
+    pipeline.add(AuditLogger())        # 1: start timing; log on response
+    pipeline.add(ContextInjector())    # 2: request ID, headers
+    pipeline.add(RateLimiter())        # 3
+    pipeline.add(SessionValidator())   # 4
+    pipeline.add(RequestSanitizer())   # 5
+    pipeline.add(LLMSanitizer())       # 6
+    pipeline.add(ResponseSanitizer())  # 7
+    pipeline.add(SecurityHeaders())    # 8
+    pipeline.add(SessionUpdater())     # 9
     return pipeline
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
-    global _http_client, _pipeline
+    global _http_client, _pipeline, _retention_task
 
     settings = load_settings()
     setup_logging(log_level=settings.log_level, json_format=settings.log_json)
@@ -61,6 +70,14 @@ async def lifespan(app: FastAPI):
 
     # Init Redis (non-fatal if unavailable)
     await redis_store.init_redis(settings.redis_url, pool_size=settings.redis_pool_size)
+
+    # Init PostgreSQL (non-fatal if unavailable)
+    await pg_store.init_postgres(
+        settings.postgres_url,
+        min_size=settings.postgres_pool_min,
+        max_size=settings.postgres_pool_max,
+    )
+    await pg_store.run_migrations()
 
     # Init HTTP client for proxying
     _http_client = httpx.AsyncClient(
@@ -74,6 +91,11 @@ async def lifespan(app: FastAPI):
 
     # Build middleware pipeline
     _pipeline = _build_pipeline()
+
+    # Start audit log retention cleanup background task
+    _retention_task = asyncio.create_task(
+        run_retention_cleanup(settings.audit_retention_cleanup_interval)
+    )
 
     # Register SIGTERM handler for graceful shutdown
     try:
@@ -90,10 +112,20 @@ async def lifespan(app: FastAPI):
     logger.info("proxy_shutting_down", drain_seconds=settings.shutdown_drain_seconds)
     _shutdown_event.set()
 
+    # Cancel retention cleanup
+    if _retention_task and not _retention_task.done():
+        _retention_task.cancel()
+        try:
+            await _retention_task
+        except asyncio.CancelledError:
+            pass
+
     if _http_client:
         await _http_client.aclose()
     await close_health_client()
+    await close_webhook_client()
     await redis_store.close_redis()
+    await pg_store.close_postgres()
 
     logger.info("proxy_stopped")
 
@@ -106,8 +138,12 @@ app.include_router(health_router)
 
 # Import and mount config API (deferred to avoid circular imports)
 from proxy.api.config_routes import router as config_router  # noqa: E402
+from proxy.api.audit_routes import router as audit_router  # noqa: E402
+from proxy.api.webhook_routes import router as webhook_router  # noqa: E402
 
 app.include_router(config_router)
+app.include_router(audit_router)
+app.include_router(webhook_router)
 
 
 HOP_BY_HOP_HEADERS = frozenset({
