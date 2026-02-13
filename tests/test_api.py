@@ -533,6 +533,68 @@ class TestRateLimitsEndpoint:
         )
         assert resp.status_code == 422
 
+    def test_update_rate_limits_rejects_zero(self, api_client):
+        resp = api_client.put(
+            f"/api/config/apps/{uuid4()}/rate-limits",
+            json={"auth_max": 0},
+            headers=_AUTH,
+        )
+        assert resp.status_code == 422
+
+    def test_update_rate_limits_partial_update(self, api_client):
+        """Only auth_max, not global_max — should merge into existing."""
+        aid = uuid4()
+        mock_app = {"id": aid, "settings": {"rate_limits": {"global_max": 500}}}
+        mock_updated = {**mock_app, "settings": {"rate_limits": {"global_max": 500, "auth_max": 100}}}
+        mock_update_app = AsyncMock(return_value=mock_updated)
+        with (
+            patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=mock_app),
+            patch("proxy.api.config_routes.pg_store.update_app", mock_update_app),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{aid}/rate-limits",
+                json={"auth_max": 100},
+                headers=_AUTH,
+            )
+            assert resp.status_code == 200
+            # Verify update_app was called with merged settings
+            call_kwargs = mock_update_app.call_args
+            settings_arg = call_kwargs.kwargs.get("settings") or call_kwargs[1].get("settings")
+            assert settings_arg["rate_limits"]["global_max"] == 500
+            assert settings_arg["rate_limits"]["auth_max"] == 100
+
+    def test_update_rate_limits_db_unavailable(self, api_client):
+        """Returns 503 when DB raises StoreUnavailable."""
+        from proxy.store.postgres import StoreUnavailable
+
+        with patch(
+            "proxy.api.config_routes.pg_store.get_app",
+            new_callable=AsyncMock,
+            side_effect=StoreUnavailable("no pool"),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{uuid4()}/rate-limits",
+                json={"auth_max": 100},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 503
+
+    def test_update_rate_limits_empty_body(self, api_client):
+        """Empty body is a no-op update."""
+        aid = uuid4()
+        mock_app = {"id": aid, "settings": {}}
+        mock_updated = {**mock_app}
+        with (
+            patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=mock_app),
+            patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{aid}/rate-limits",
+                json={},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 200
+
 
 class TestHeaderSettingsEndpoint:
     """Tests for PUT /apps/{app_id}/headers convenience endpoint."""
@@ -568,3 +630,73 @@ class TestHeaderSettingsEndpoint:
                 headers=_AUTH,
             )
         assert resp.status_code == 404
+
+    def test_update_headers_csp_override(self, api_client):
+        """Setting csp_override should update settings."""
+        aid = uuid4()
+        mock_app = {"id": aid, "settings": {}}
+        mock_updated = {**mock_app, "settings": {"csp_override": "script-src https://cdn.example.com"}}
+        with (
+            patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=mock_app),
+            patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{aid}/headers",
+                json={"csp_override": "script-src https://cdn.example.com"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 200
+
+    def test_update_headers_both_preset_and_csp(self, api_client):
+        """Setting both header_preset and csp_override together."""
+        aid = uuid4()
+        mock_app = {"id": aid, "settings": {}}
+        mock_updated = {**mock_app, "settings": {"header_preset": "strict", "csp_override": "script-src https://x.com"}}
+        with (
+            patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=mock_app),
+            patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{aid}/headers",
+                json={"header_preset": "strict", "csp_override": "script-src https://x.com"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 200
+
+    def test_update_headers_db_unavailable(self, api_client):
+        """Returns 503 when DB raises StoreUnavailable."""
+        from proxy.store.postgres import StoreUnavailable
+
+        with patch(
+            "proxy.api.config_routes.pg_store.get_app",
+            new_callable=AsyncMock,
+            side_effect=StoreUnavailable("no pool"),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{uuid4()}/headers",
+                json={"header_preset": "strict"},
+                headers=_AUTH,
+            )
+        assert resp.status_code == 503
+
+    def test_update_headers_preserves_existing_settings(self, api_client):
+        """Updating headers should not clobber existing settings."""
+        aid = uuid4()
+        mock_app = {"id": aid, "settings": {"rate_limits": {"auth_max": 100}}}
+        mock_updated = {**mock_app, "settings": {"rate_limits": {"auth_max": 100}, "header_preset": "strict"}}
+        mock_update_app = AsyncMock(return_value=mock_updated)
+        with (
+            patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=mock_app),
+            patch("proxy.api.config_routes.pg_store.update_app", mock_update_app),
+        ):
+            resp = api_client.put(
+                f"/api/config/apps/{aid}/headers",
+                json={"header_preset": "strict"},
+                headers=_AUTH,
+            )
+            assert resp.status_code == 200
+            # Verify existing rate_limits are preserved in the update call
+            call_kwargs = mock_update_app.call_args
+            settings_arg = call_kwargs.kwargs.get("settings") or call_kwargs[1].get("settings")
+            assert settings_arg["rate_limits"]["auth_max"] == 100
+            assert settings_arg["header_preset"] == "strict"

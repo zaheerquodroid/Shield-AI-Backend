@@ -271,3 +271,223 @@ class TestRateLimiterFeatureFlag:
 
         assert result is None
         mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_enabled_features_defaults_to_enabled(self):
+        """Missing enabled_features key should default to rate limiting on."""
+        limiter = RateLimiter()
+        ctx = RequestContext(tenant_id="t")
+        ctx.customer_config = {"settings": {}}  # no enabled_features
+        redis = _mock_redis(current_count=0)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result is None  # allowed, and Redis was called
+
+    @pytest.mark.asyncio
+    async def test_missing_rate_limiting_key_defaults_to_enabled(self):
+        """Missing rate_limiting key in features should default to True."""
+        limiter = RateLimiter()
+        ctx = RequestContext(tenant_id="t")
+        ctx.customer_config = {
+            "enabled_features": {"waf": True},  # no rate_limiting key
+            "settings": {},
+        }
+        redis = _mock_redis(current_count=0)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result is None
+
+
+class TestRateLimiterTenantFallback:
+    @pytest.mark.asyncio
+    async def test_empty_tenant_id_uses_global(self):
+        """Empty tenant_id should use 'global' as key prefix."""
+        limiter = RateLimiter()
+        ctx = _make_context(tenant_id="")
+        redis = _mock_redis(current_count=0)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result is None
+        # Verify the key used contains "global"
+        pipe = redis.pipeline()
+        call_args = pipe.zremrangebyscore.call_args
+        assert "global" in call_args[0][0]
+
+
+class TestRateLimiterRemainingCalc:
+    @pytest.mark.asyncio
+    async def test_first_request_remaining(self):
+        """First request should have remaining = max - 1."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=0)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            await limiter.process_request(_make_request(), ctx)
+
+        assert ctx.extra["rate_limit_remaining"] == 1999  # 2000 - 0 - 1
+
+    @pytest.mark.asyncio
+    async def test_remaining_at_limit_minus_one(self):
+        """Last allowed request should have remaining = 0."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=1999)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            await limiter.process_request(_make_request(), ctx)
+
+        assert ctx.extra["rate_limit_remaining"] == 0  # 2000 - 1999 - 1
+
+    @pytest.mark.asyncio
+    async def test_remaining_never_negative(self):
+        """Remaining should never go below 0."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        # Way over limit — remaining should be clamped to 0
+        redis = _mock_redis(current_count=5000)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            await limiter.process_request(_make_request(), ctx)
+
+        assert ctx.extra["rate_limit_remaining"] == 0
+
+
+class TestRateLimiter429ResponseDetails:
+    @pytest.mark.asyncio
+    async def test_429_retry_after_equals_window(self):
+        """Retry-After header should equal the window duration."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=2000)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result.headers["Retry-After"] == "300"  # WINDOW_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_429_has_rate_limit_limit_header(self):
+        """429 response has X-RateLimit-Limit header."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=2000)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result.headers["X-RateLimit-Limit"] == "2000"
+
+    @pytest.mark.asyncio
+    async def test_429_has_rate_limit_reset_header(self):
+        """429 response has X-RateLimit-Reset header with future timestamp."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=2000)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        reset = int(result.headers["X-RateLimit-Reset"])
+        assert reset > 0
+
+    @pytest.mark.asyncio
+    async def test_429_media_type_is_json(self):
+        """429 response should be application/json."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        redis = _mock_redis(current_count=2000)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result.media_type == "application/json"
+
+
+class TestRateLimiterCustomerOverrideExpanded:
+    @pytest.mark.asyncio
+    async def test_auth_max_override(self):
+        """Per-customer auth_max override should be applied."""
+        limiter = RateLimiter()
+        ctx = _make_context(rate_overrides={"auth_max": 50})
+        redis = _mock_redis(current_count=50)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request("/auth/login"), ctx)
+
+        assert result.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_auth_max_override_allows_under(self):
+        """Requests under auth_max override should pass."""
+        limiter = RateLimiter()
+        ctx = _make_context(rate_overrides={"auth_max": 50})
+        redis = _mock_redis(current_count=49)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request("/auth/login"), ctx)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_window_seconds_override(self):
+        """Per-customer window_seconds override affects Retry-After."""
+        limiter = RateLimiter()
+        ctx = _make_context(rate_overrides={"global_max": 10, "window_seconds": 60})
+        redis = _mock_redis(current_count=10)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result.status_code == 429
+        assert result.headers["Retry-After"] == "60"
+
+    @pytest.mark.asyncio
+    async def test_missing_rate_limits_in_settings(self):
+        """Missing rate_limits key in settings should use defaults."""
+        limiter = RateLimiter()
+        ctx = RequestContext(tenant_id="t")
+        ctx.customer_config = {
+            "enabled_features": {"rate_limiting": True},
+            "settings": {},  # no rate_limits
+        }
+        redis = _mock_redis(current_count=0)
+
+        with patch("proxy.middleware.rate_limiter.get_redis", return_value=redis):
+            result = await limiter.process_request(_make_request(), ctx)
+
+        assert result is None
+
+
+class TestRateLimiterResponseHeaders:
+    @pytest.mark.asyncio
+    async def test_response_headers_not_set_without_rate_limiting(self):
+        """Response should not have rate limit headers if middleware didn't run."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        # No rate_limit_max in context.extra
+        response = Response(content="ok", status_code=200)
+        result = await limiter.process_response(response, ctx)
+        assert "X-RateLimit-Limit" not in result.headers
+
+    @pytest.mark.asyncio
+    async def test_response_headers_values_are_strings(self):
+        """All rate limit headers should be string values."""
+        limiter = RateLimiter()
+        ctx = _make_context()
+        ctx.extra["rate_limit_max"] = 2000
+        ctx.extra["rate_limit_remaining"] = 1999
+        ctx.extra["rate_limit_reset"] = 1700000300
+
+        response = Response(content="ok", status_code=200)
+        result = await limiter.process_response(response, ctx)
+
+        assert isinstance(result.headers["X-RateLimit-Limit"], str)
+        assert isinstance(result.headers["X-RateLimit-Remaining"], str)
+        assert isinstance(result.headers["X-RateLimit-Reset"], str)

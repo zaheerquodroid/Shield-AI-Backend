@@ -257,3 +257,66 @@ async def test_response_middleware_exception_skipped():
     # first and third still ran (reverse order: third, crash, first)
     assert "resp:third" in order_log
     assert "resp:first" in order_log
+
+
+# --- Pipeline build order tests ---
+
+
+class TestBuildPipelineOrder:
+    """Verify _build_pipeline() registers middleware in the correct order."""
+
+    def test_pipeline_order(self):
+        """Middleware should be registered in security-critical order."""
+        from proxy.main import _build_pipeline
+
+        pipeline = _build_pipeline()
+        names = [mw.name for mw in pipeline._middleware]
+
+        assert names == [
+            "TenantRouter",
+            "ContextInjector",
+            "RateLimiter",
+            "SessionValidator",
+            "RequestSanitizer",
+            "ResponseSanitizer",
+            "SecurityHeaders",
+            "AuditLogger",
+            "SessionUpdater",
+        ]
+
+    def test_rate_limiter_before_session_validator(self):
+        """RateLimiter must come before SessionValidator to reject early."""
+        from proxy.main import _build_pipeline
+
+        pipeline = _build_pipeline()
+        names = [mw.name for mw in pipeline._middleware]
+
+        rl_idx = names.index("RateLimiter")
+        sv_idx = names.index("SessionValidator")
+        assert rl_idx < sv_idx
+
+    def test_security_headers_after_response_sanitizer(self):
+        """SecurityHeaders must come after ResponseSanitizer to cover all responses."""
+        from proxy.main import _build_pipeline
+
+        pipeline = _build_pipeline()
+        names = [mw.name for mw in pipeline._middleware]
+
+        sh_idx = names.index("SecurityHeaders")
+        rs_idx = names.index("ResponseSanitizer")
+        assert sh_idx > rs_idx
+
+    def test_tenant_router_is_first(self):
+        """TenantRouter must be first to identify the customer."""
+        from proxy.main import _build_pipeline
+
+        pipeline = _build_pipeline()
+        assert pipeline._middleware[0].name == "TenantRouter"
+
+    def test_all_middleware_enabled_by_default(self):
+        """All middleware should be enabled by default."""
+        from proxy.main import _build_pipeline
+
+        pipeline = _build_pipeline()
+        for mw in pipeline._middleware:
+            assert pipeline._enabled.get(mw.name) is True
