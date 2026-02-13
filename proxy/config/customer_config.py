@@ -25,6 +25,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "security_headers": True,
         "bot_protection": False,
         "ssrf_validator": True,
+        "callback_verifier": False,
     },
     "settings": {},
 }

@@ -149,7 +149,7 @@ class TestAC2_MiddlewarePipelineOrder:
         assert log == ["C", "B", "A"]
 
     def test_production_pipeline_order(self):
-        """Production pipeline has 10 middleware in the correct security order."""
+        """Production pipeline has 11 middleware in the correct security order."""
         from proxy.main import _build_pipeline
 
         pipeline = _build_pipeline()
@@ -160,6 +160,7 @@ class TestAC2_MiddlewarePipelineOrder:
             "ContextInjector",
             "RateLimiter",
             "SessionValidator",
+            "CallbackVerifier",
             "SSRFValidator",
             "LLMSanitizer",
             "ResponseSanitizer",

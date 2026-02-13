@@ -278,6 +278,7 @@ class TestBuildPipelineOrder:
             "ContextInjector",
             "RateLimiter",
             "SessionValidator",
+            "CallbackVerifier",
             "SSRFValidator",
             "LLMSanitizer",
             "ResponseSanitizer",
