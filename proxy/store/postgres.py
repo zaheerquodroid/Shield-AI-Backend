@@ -35,14 +35,23 @@ except ImportError:
 
 
 async def init_postgres(url: str, min_size: int = 2, max_size: int = 10):
-    """Initialize PostgreSQL connection pool."""
+    """Initialize PostgreSQL connection pool with connection warmup."""
     global _pool
     if asyncpg is None:
         logger.warning("asyncpg_not_installed")
         return None
     try:
         _pool = await asyncpg.create_pool(url, min_size=min_size, max_size=max_size)
-        logger.info("postgres_connected", min_size=min_size, max_size=max_size)
+        # Warmup: ensure min_size connections are actually established
+        warmup_conns = []
+        for _ in range(min_size):
+            try:
+                warmup_conns.append(await _pool.acquire())
+            except Exception:
+                break
+        for conn in warmup_conns:
+            await _pool.release(conn)
+        logger.info("postgres_connected", min_size=min_size, max_size=max_size, warmed=len(warmup_conns))
         return _pool
     except Exception as exc:
         logger.error("postgres_connect_failed", error=str(exc))

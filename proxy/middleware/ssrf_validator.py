@@ -43,9 +43,7 @@ _URL_RE = re.compile(
 def _check_duplicate_keys(raw_body: bytes) -> bool:
     """Detect duplicate JSON keys using object_pairs_hook.
 
-    Returns True if duplicates found. Duplicate keys are a JSON smuggling
-    vector: Python uses last-wins but other parsers may use first-wins,
-    allowing an attacker to hide a malicious URL behind a safe one.
+    Returns True if duplicates found.
     """
     try:
         has_dupes = False
@@ -97,13 +95,22 @@ class SSRFValidator(Middleware):
         if request.method.upper() not in ("POST", "PUT", "PATCH"):
             return None
 
-        # Parse JSON body
+        # Parse JSON body with duplicate key detection in a single pass
         body = await request.body()
         if not body:
             return None
 
+        has_dupes = False
+
+        def _pairs_hook(pairs: list[tuple[str, object]]) -> dict:
+            nonlocal has_dupes
+            keys = [k for k, _ in pairs]
+            if len(keys) != len(set(keys)):
+                has_dupes = True
+            return dict(pairs)
+
         try:
-            data = json.loads(body)
+            data = json.loads(body, object_pairs_hook=_pairs_hook)
         except (json.JSONDecodeError, UnicodeDecodeError):
             # Non-JSON body on a protected endpoint — log for visibility.
             # Attackers can bypass JSON-only scanning by switching Content-Type.
@@ -122,7 +129,7 @@ class SSRFValidator(Middleware):
 
         # Reject duplicate JSON keys — prevents smuggling where Python
         # (last-wins) sees a safe value but upstream (first-wins) sees malicious.
-        if isinstance(data, dict) and _check_duplicate_keys(body):
+        if isinstance(data, dict) and has_dupes:
             error_id = uuid4().hex[:8]
             logger.warning(
                 "ssrf_duplicate_json_keys",
@@ -143,8 +150,13 @@ class SSRFValidator(Middleware):
                 )
             # detect_only: logged above, continue processing
 
-        # Extract all string fields
-        string_fields = extract_string_fields(data)
+        # Extract all string fields (cache for reuse by LLM sanitizer)
+        _cache_key = "_extracted_string_fields"
+        if _cache_key in context.extra:
+            string_fields = context.extra[_cache_key]
+        else:
+            string_fields = extract_string_fields(data)
+            context.extra[_cache_key] = string_fields
         if not string_fields:
             return None
 

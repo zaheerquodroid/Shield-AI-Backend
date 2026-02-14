@@ -28,9 +28,15 @@ from proxy.middleware.audit_logger import AuditLogger, _sanitize
 from proxy.middleware.audit_retention import PLAN_RETENTION_DAYS, DEFAULT_RETENTION_DAYS
 from proxy.middleware.pipeline import RequestContext
 from proxy.store.audit import (
-    insert_audit_log,
     query_audit_logs,
     delete_old_audit_logs,
+)
+
+# Field names matching the tuple order put onto AuditLogger._queue
+_AUDIT_FIELDS = (
+    "tenant_id", "app_id", "request_id", "timestamp", "method", "path",
+    "status_code", "duration_ms", "client_ip", "user_agent", "country",
+    "user_id", "action", "blocked",
 )
 
 
@@ -96,7 +102,7 @@ class TestAC1_AuditFieldsLogged:
 
     @pytest.mark.asyncio
     async def test_all_required_fields_logged(self):
-        """process_response fires insert_audit_log with all required fields."""
+        """process_response enqueues a row tuple with all required fields."""
         logger = AuditLogger()
         req = _make_request()
         ctx = _make_context()
@@ -105,15 +111,11 @@ class TestAC1_AuditFieldsLogged:
 
         response = Response(content="OK", status_code=200)
 
-        captured = {}
+        await logger.process_response(response, ctx)
 
-        async def _capture(**kwargs):
-            captured.update(kwargs)
-
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_capture):
-            await logger.process_response(response, ctx)
-            # Let the asyncio.create_task fire
-            await asyncio.sleep(0.01)
+        assert not logger._queue.empty()
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
         assert captured["tenant_id"] == "tenant-1"
         assert captured["request_id"] == "abc123"
@@ -138,21 +140,18 @@ class TestAC1_AuditFieldsLogged:
 
         response = Response(content="Too many requests", status_code=429)
 
-        captured = {}
+        await logger.process_response(response, ctx)
 
-        async def _capture(**kwargs):
-            captured.update(kwargs)
-
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_capture):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
+        assert not logger._queue.empty()
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
         assert captured["action"] == "rate_limited"
         assert captured["blocked"] is True
 
     @pytest.mark.asyncio
     async def test_feature_flag_off_skips_logging(self):
-        """When audit_logging is disabled, no insert happens."""
+        """When audit_logging is disabled, nothing is enqueued."""
         logger = AuditLogger()
         req = _make_request()
         ctx = _make_context(audit_logging=False)
@@ -160,21 +159,14 @@ class TestAC1_AuditFieldsLogged:
         await logger.process_request(req, ctx)
 
         response = Response(content="OK", status_code=200)
-        called = False
 
-        async def _capture(**kwargs):
-            nonlocal called
-            called = True
+        await logger.process_response(response, ctx)
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_capture):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
-
-        assert called is False
+        assert logger._queue.empty()
 
     @pytest.mark.asyncio
     async def test_audit_failure_does_not_crash_proxy(self):
-        """If insert_audit_log raises, the response is still returned."""
+        """process_response always returns the response (queue put is non-blocking)."""
         logger = AuditLogger()
         req = _make_request()
         ctx = _make_context()
@@ -182,12 +174,7 @@ class TestAC1_AuditFieldsLogged:
         await logger.process_request(req, ctx)
         response = Response(content="OK", status_code=200)
 
-        async def _boom(**kwargs):
-            raise RuntimeError("DB is down")
-
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_boom):
-            result = await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
+        result = await logger.process_response(response, ctx)
 
         assert result.status_code == 200
 
@@ -211,16 +198,13 @@ class TestAC1_AuditFieldsLogged:
         await logger.process_request(req, ctx)
         response = Response(content="secret-body-content", status_code=200)
 
-        captured = {}
+        await logger.process_response(response, ctx)
 
-        async def _capture(**kwargs):
-            captured.update(kwargs)
+        assert not logger._queue.empty()
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_capture):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
-
-        # No key should contain body content
+        # No field should contain body content
         for key, val in captured.items():
             if isinstance(val, str):
                 assert "secret-body-content" not in val
@@ -241,22 +225,20 @@ class TestAC1_AuditFieldsLogged:
             await logger.process_request(req, ctx)
 
             response = Response(content="OK", status_code=status)
-            captured = {}
 
-            async def _capture(**kwargs):
-                captured.update(kwargs)
+            await logger.process_response(response, ctx)
 
-            with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_capture):
-                await logger.process_response(response, ctx)
-                await asyncio.sleep(0.01)
+            assert not logger._queue.empty()
+            row = logger._queue.get_nowait()
+            captured = dict(zip(_AUDIT_FIELDS, row))
 
             assert captured["action"] == expected_action, f"{method} {path} -> {captured.get('action')}"
 
     @pytest.mark.asyncio
     async def test_bounded_task_queue(self):
-        """Pending task deque has maxlen=1000."""
+        """Audit queue has maxsize=10000."""
         logger = AuditLogger()
-        assert logger._pending.maxlen == 1000
+        assert logger._queue.maxsize == 10000
 
     @pytest.mark.asyncio
     async def test_empty_tenant_skips_logging(self):
@@ -267,17 +249,10 @@ class TestAC1_AuditFieldsLogged:
 
         await logger.process_request(req, ctx)
         response = Response(content="OK", status_code=200)
-        called = False
 
-        async def _capture(**kwargs):
-            nonlocal called
-            called = True
+        await logger.process_response(response, ctx)
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_capture):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
-
-        assert called is False
+        assert logger._queue.empty()
 
     @pytest.mark.asyncio
     async def test_client_ip_uses_direct_peer_not_xff(self):
@@ -291,14 +266,12 @@ class TestAC1_AuditFieldsLogged:
         ctx.extra["x_forwarded_for"] = "1.2.3.4, 203.0.113.99"
 
         response = Response(content="OK", status_code=200)
-        captured = {}
 
-        async def _capture(**kwargs):
-            captured.update(kwargs)
+        await logger.process_response(response, ctx)
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_capture):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
+        assert not logger._queue.empty()
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
         # Must use direct peer IP, NOT the spoofed first XFF entry
         assert captured["client_ip"] == "203.0.113.99"
@@ -362,7 +335,6 @@ class TestAC3_QueryFilters:
     async def test_query_by_tenant(self):
         """query_audit_logs filters by tenant_id."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 1})
         mock_conn.fetch = AsyncMock(return_value=[
             {"id": 1, "tenant_id": "t1", "method": "GET", "path": "/", "status_code": 200,
              "action": "api_read", "blocked": False, "timestamp": datetime.now(timezone.utc),
@@ -377,19 +349,18 @@ class TestAC3_QueryFilters:
 
         with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
-            rows, total = await query_audit_logs(tenant_id="t1")
+            rows, has_more = await query_audit_logs(tenant_id="t1")
 
-        assert total == 1
+        assert has_more is False
         assert len(rows) == 1
         # Verify tenant_id was in the SQL query
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "tenant_id = $1" in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "tenant_id = $1" in fetch_sql
 
     @pytest.mark.asyncio
     async def test_query_with_time_range(self):
         """query_audit_logs accepts start_time and end_time filters."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -402,19 +373,18 @@ class TestAC3_QueryFilters:
 
         with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
-            rows, total = await query_audit_logs(
+            rows, has_more = await query_audit_logs(
                 tenant_id="t1", start_time=start, end_time=end,
             )
 
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "timestamp >=" in count_sql
-        assert "timestamp <=" in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "timestamp >=" in fetch_sql
+        assert "timestamp <=" in fetch_sql
 
     @pytest.mark.asyncio
     async def test_query_with_method_filter(self):
         """query_audit_logs accepts method filter."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -426,14 +396,13 @@ class TestAC3_QueryFilters:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", method="POST")
 
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "method = " in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "method = " in fetch_sql
 
     @pytest.mark.asyncio
     async def test_query_with_path_filter(self):
         """query_audit_logs accepts path LIKE filter."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -445,13 +414,12 @@ class TestAC3_QueryFilters:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", path="/api")
 
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "path LIKE" in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "path LIKE" in fetch_sql
 
     @pytest.mark.asyncio
     async def test_query_with_status_filter(self):
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -463,13 +431,12 @@ class TestAC3_QueryFilters:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", status_code=429)
 
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "status_code = " in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "status_code = " in fetch_sql
 
     @pytest.mark.asyncio
     async def test_query_with_action_filter(self):
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -481,13 +448,12 @@ class TestAC3_QueryFilters:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", action="rate_limited")
 
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "action = " in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "action = " in fetch_sql
 
     @pytest.mark.asyncio
     async def test_query_with_blocked_filter(self):
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -499,13 +465,12 @@ class TestAC3_QueryFilters:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", blocked=True)
 
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "blocked = " in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "blocked = " in fetch_sql
 
     @pytest.mark.asyncio
     async def test_query_with_user_id_filter(self):
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -517,14 +482,13 @@ class TestAC3_QueryFilters:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", user_id="user-42")
 
-        count_sql = mock_conn.fetchrow.call_args[0][0]
-        assert "user_id = " in count_sql
+        fetch_sql = mock_conn.fetch.call_args[0][0]
+        assert "user_id = " in fetch_sql
 
     @pytest.mark.asyncio
     async def test_pagination(self):
         """Limit and offset are passed to SQL."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 100})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -534,18 +498,17 @@ class TestAC3_QueryFilters:
 
         with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
-            _, total = await query_audit_logs(tenant_id="t1", limit=10, offset=20)
+            _, has_more = await query_audit_logs(tenant_id="t1", limit=10, offset=20)
 
-        assert total == 100
+        assert has_more is False
         fetch_sql = mock_conn.fetch.call_args[0][0]
         assert "LIMIT" in fetch_sql
         assert "OFFSET" in fetch_sql
 
     @pytest.mark.asyncio
     async def test_limit_clamped_to_1000(self):
-        """Limit exceeding 1000 is clamped."""
+        """Limit exceeding 1000 is clamped (limit+1 passed to fetch)."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -557,16 +520,14 @@ class TestAC3_QueryFilters:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", limit=5000)
 
-        # The limit arg passed should be 1000, not 5000
+        # The limit+1 arg passed should be 1001 (clamped 1000 + 1), not 5001
         call_args = mock_conn.fetch.call_args[0]
-        # limit is the second-to-last positional arg
-        assert 1000 in call_args
+        assert 1001 in call_args
 
     @pytest.mark.asyncio
     async def test_ordering_by_timestamp_desc(self):
         """Results are ordered by timestamp DESC."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -583,17 +544,16 @@ class TestAC3_QueryFilters:
 
     @pytest.mark.asyncio
     async def test_no_pool_returns_empty(self):
-        """When no DB pool, returns empty list and 0."""
+        """When no DB pool, returns empty list and has_more=False."""
         with patch("proxy.store.audit.get_pool", return_value=None):
-            rows, total = await query_audit_logs(tenant_id="t1")
+            rows, has_more = await query_audit_logs(tenant_id="t1")
         assert rows == []
-        assert total == 0
+        assert has_more is False
 
     @pytest.mark.asyncio
     async def test_path_like_wildcards_escaped(self):
         """LIKE wildcards % and _ in path filter are escaped to prevent broadening."""
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_pool = MagicMock()
@@ -606,9 +566,8 @@ class TestAC3_QueryFilters:
             await query_audit_logs(tenant_id="t1", path="100%_done")
 
         # The path value passed should have % and _ escaped.
-        # fetchrow is called with (sql, tenant_id, path_like_value, ...)
-        # positional args after the SQL string start at index 1
-        call_args = mock_conn.fetchrow.call_args[0]
+        # fetch is called with (sql, *values, limit+1, offset)
+        call_args = mock_conn.fetch.call_args[0]
         # Find the LIKE value — it's the one containing "done"
         path_val = [a for a in call_args if isinstance(a, str) and "done" in a][0]
         assert "\\%" in path_val, f"Expected escaped %% in {path_val!r}"

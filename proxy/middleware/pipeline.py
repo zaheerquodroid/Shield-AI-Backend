@@ -62,6 +62,13 @@ class MiddlewarePipeline:
         self._enabled[middleware.name] = enabled
         logger.info("middleware_registered", name=middleware.name, enabled=enabled)
 
+    def get_middleware(self, cls: type) -> Middleware | None:
+        """Return the first middleware instance of the given type, or None."""
+        for m in self._middleware:
+            if isinstance(m, cls):
+                return m
+        return None
+
     def set_enabled(self, name: str, enabled: bool) -> None:
         """Enable or disable a middleware by name."""
         if name in self._enabled:

@@ -295,12 +295,11 @@ class TestFieldTruncationAuditEvasion:
         resp = MagicMock(spec=["status_code", "headers"])
         resp.status_code = 200
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock) as mock_insert:
-            await al.process_response(resp, ctx)
+        await al.process_response(resp, ctx)
 
-        # Verify the method arg was truncated
-        call_kwargs = mock_insert.call_args.kwargs
-        assert len(call_kwargs["method"]) <= 10
+        # Verify the method arg was truncated (tuple index 4 = method)
+        row = al._queue.get_nowait()
+        assert len(row[4]) <= 10
 
     @pytest.mark.asyncio
     async def test_oversized_app_id_truncated(self):
@@ -330,10 +329,11 @@ class TestFieldTruncationAuditEvasion:
         resp = MagicMock(spec=["status_code", "headers"])
         resp.status_code = 200
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock) as mock_insert:
-            await al.process_response(resp, ctx)
+        await al.process_response(resp, ctx)
 
-        assert len(mock_insert.call_args.kwargs["app_id"]) <= 255
+        # tuple index 1 = app_id
+        row = al._queue.get_nowait()
+        assert len(row[1]) <= 255
 
     @pytest.mark.asyncio
     async def test_country_field_sanitized(self):
@@ -364,10 +364,11 @@ class TestFieldTruncationAuditEvasion:
         resp = MagicMock(spec=["status_code", "headers"])
         resp.status_code = 200
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock) as mock_insert:
-            await al.process_response(resp, ctx)
+        await al.process_response(resp, ctx)
 
-        country = mock_insert.call_args.kwargs["country"]
+        # tuple index 10 = country
+        row = al._queue.get_nowait()
+        country = row[10]
         assert "\r" not in country
         assert "\n" not in country
 
@@ -514,21 +515,20 @@ class TestSeparateTaskQueues:
         resp = MagicMock(spec=["status_code", "headers"])
         resp.status_code = 403
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock), \
-             patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock):
+        with patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock):
             await al.process_response(resp, ctx)
 
-        # Audit in _pending, webhook in _pending_webhooks
-        assert len(al._pending) >= 1
+        # Audit in _queue, webhook in _pending_webhooks
+        assert al._queue.qsize() >= 1
         assert len(al._pending_webhooks) >= 1
 
     def test_queue_sizes_are_independent(self):
-        """Queue maxlen is set independently for audit and webhook."""
+        """Queue limits are set independently for audit and webhook."""
         al = AuditLogger()
-        assert al._pending.maxlen is not None
+        assert al._queue.maxsize > 0
         assert al._pending_webhooks.maxlen is not None
-        # They should be separate deque objects
-        assert al._pending is not al._pending_webhooks
+        # They should be separate objects
+        assert al._queue is not al._pending_webhooks
 
 
 # ===========================================================================

@@ -147,12 +147,18 @@ def _build_error_response(status_code: int, error_id: str) -> JSONResponse:
     )
 
 
-def detect_sensitive_content(body: str) -> list[str]:
-    """Scan body text for sensitive patterns. Returns list of matched pattern names."""
+def detect_sensitive_content(body: str, *, first_match_only: bool = False) -> list[str]:
+    """Scan body text for sensitive patterns. Returns list of matched pattern names.
+
+    When *first_match_only* is True, returns after the first match for faster
+    detection when the caller only needs to know *if* sensitive content exists.
+    """
     matches = []
     for pattern, name in _SENSITIVE_PATTERNS:
         if pattern.search(body):
             matches.append(name)
+            if first_match_only:
+                return matches
     return matches
 
 
@@ -188,8 +194,20 @@ class ResponseSanitizer(Middleware):
         if not features.get("response_sanitizer", True):
             return response
 
-        # Read response body
-        body_bytes = response.body if hasattr(response, "body") else b""
+        # Read response body — guard against StreamingResponse or other
+        # response types that lack a .body attribute.  Without this check
+        # an attacker who can trigger a streaming error response would
+        # bypass sensitive content scanning entirely.
+        body_bytes = getattr(response, "body", None)
+        if body_bytes is None:
+            logger.warning(
+                "response_sanitizer_skip_no_body",
+                response_type=type(response).__name__,
+                status_code=response.status_code,
+                request_id=context.request_id,
+                tenant_id=context.tenant_id,
+            )
+            return response
         if not body_bytes:
             return response
 
@@ -198,8 +216,10 @@ class ResponseSanitizer(Middleware):
         except Exception:
             return response
 
-        # Scan for sensitive patterns
-        matches = detect_sensitive_content(body_text)
+        # Scan for sensitive patterns.
+        # In sanitize mode we only need to know IF there's a match (early-exit).
+        # In log_only mode we want the full list for audit.
+        matches = detect_sensitive_content(body_text, first_match_only=(mode == "sanitize"))
         if not matches:
             return response
 

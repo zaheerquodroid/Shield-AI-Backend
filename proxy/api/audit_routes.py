@@ -97,7 +97,7 @@ async def get_audit_logs(
 ):
     """Query audit logs with filters. Supports JSON and CSV export."""
     try:
-        rows, total = await query_audit_logs(
+        rows, has_more = await query_audit_logs(
             tenant_id=tenant_id,
             app_id=app_id,
             start_time=_parse_datetime(start_time, "start_time"),
@@ -137,4 +137,4 @@ async def get_audit_logs(
                 out[k] = str(out[k])
         serialized.append(out)
 
-    return {"data": serialized, "total": total, "limit": limit, "offset": offset}
+    return {"data": serialized, "has_more": has_more, "limit": limit, "offset": offset}

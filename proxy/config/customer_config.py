@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import time
+import types
 from typing import Any
 
 import structlog
@@ -14,9 +14,11 @@ from proxy.store import postgres as pg_store
 
 logger = structlog.get_logger()
 
-_DEFAULT_CONFIG: dict[str, Any] = {
+# Frozen default config — returned directly without deepcopy.
+# MappingProxyType prevents accidental mutation of the shared default.
+_DEFAULT_CONFIG: types.MappingProxyType = types.MappingProxyType({
     "origin_url": "http://localhost:3000",
-    "enabled_features": {
+    "enabled_features": types.MappingProxyType({
         "waf": True,
         "error_sanitization": True,
         "session_validation": True,
@@ -26,9 +28,12 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "bot_protection": False,
         "ssrf_validator": True,
         "callback_verifier": False,
-    },
-    "settings": {},
-}
+    }),
+    "settings": types.MappingProxyType({}),
+})
+
+_NEGATIVE_CACHE_TTL = 10   # seconds
+_NEGATIVE_CACHE_MAX = 10_000  # max entries to prevent memory exhaustion
 
 
 class CustomerConfigService:
@@ -36,6 +41,7 @@ class CustomerConfigService:
 
     def __init__(self, cache_ttl: int = 60) -> None:
         self._cache: dict[str, dict[str, Any]] = {}
+        self._negative_cache: dict[str, float] = {}  # domain -> expiry_time
         self._cache_time: float = 0.0
         self._cache_ttl = cache_ttl
         self._poll_task: asyncio.Task | None = None
@@ -63,10 +69,21 @@ class CustomerConfigService:
     def get_config(self, domain: str) -> dict[str, Any]:
         """Return config for a domain, or default config if not found."""
         config = self._cache.get(domain)
-        if config is None:
-            logger.debug("customer_config_miss", domain=domain)
-            return copy.deepcopy(_DEFAULT_CONFIG)
-        return config
+        if config is not None:
+            return config
+        # Negative cache: avoid repeated logging for unknown domains
+        now = time.monotonic()
+        neg = self._negative_cache.get(domain)
+        if neg and now < neg:
+            return _DEFAULT_CONFIG
+        self._negative_cache[domain] = now + _NEGATIVE_CACHE_TTL
+        # Evict expired entries when cache exceeds max size
+        if len(self._negative_cache) > _NEGATIVE_CACHE_MAX:
+            self._negative_cache = {
+                d: exp for d, exp in self._negative_cache.items() if exp > now
+            }
+        logger.debug("customer_config_miss", domain=domain)
+        return _DEFAULT_CONFIG
 
     def is_stale(self) -> bool:
         """Check if cache is older than TTL."""

@@ -220,15 +220,15 @@ class TestCustomerConfigEdgeCases:
         service._cache_time = time.monotonic()
         assert not service.is_stale()
 
-    def test_default_config_deep_copy_isolation(self):
-        """Mutating returned default config must not corrupt the shared default."""
+    def test_default_config_immutable(self):
+        """Default config is immutable (MappingProxyType prevents mutation)."""
         service = CustomerConfigService()
-        config1 = service.get_config("unknown-1.com")
-        # Mutate nested dict
-        config1["enabled_features"]["waf"] = False
-        config1["settings"]["injected"] = "evil"
-
-        # Second call should still get clean defaults
-        config2 = service.get_config("unknown-2.com")
-        assert config2["enabled_features"]["waf"] is True
-        assert config2["settings"] == {}
+        config = service.get_config("unknown-1.com")
+        # Attempting to mutate raises TypeError
+        with pytest.raises(TypeError):
+            config["enabled_features"]["waf"] = False
+        with pytest.raises(TypeError):
+            config["settings"]["injected"] = "evil"
+        # Values remain correct
+        assert config["enabled_features"]["waf"] is True
+        assert config["settings"] == {}

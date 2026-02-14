@@ -94,6 +94,21 @@ async def lifespan(app: FastAPI):
     # Build middleware pipeline
     _pipeline = _build_pipeline()
 
+    # Start audit logger batch flush loop
+    _audit_logger = _pipeline.get_middleware(AuditLogger) if _pipeline else None
+    if _audit_logger:
+        await _audit_logger.start()
+
+    # Start customer config polling
+    from proxy.config.customer_config import get_config_service
+
+    config_svc = get_config_service()
+    try:
+        await config_svc.load_all()
+    except Exception:
+        logger.warning("customer_config_initial_load_failed")
+    await config_svc.start_polling()
+
     # Start audit log retention cleanup background task
     _retention_task = asyncio.create_task(
         run_retention_cleanup(settings.audit_retention_cleanup_interval)
@@ -121,6 +136,13 @@ async def lifespan(app: FastAPI):
             await _retention_task
         except asyncio.CancelledError:
             pass
+
+    # Stop audit logger (drain queue)
+    if _audit_logger:
+        await _audit_logger.stop()
+
+    # Stop config polling
+    await config_svc.stop_polling()
 
     if _http_client:
         await _http_client.aclose()

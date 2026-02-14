@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import time as _time
 import unicodedata
 from urllib.parse import urlparse
 
@@ -19,9 +20,60 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("::/128"),  # IPv6 unspecified (equivalent to 0.0.0.0)
     ipaddress.ip_network("fc00::/7"),  # IPv6 private
     ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
+    # Transition mechanisms that can embed private IPv4 addresses:
+    ipaddress.ip_network("2002::/16"),  # 6to4 — embeds IPv4 in bits 16-47
+    ipaddress.ip_network("2001::/32"),  # Teredo — tunnels IPv4 over UDP
+    ipaddress.ip_network("64:ff9b::/96"),  # NAT64 well-known prefix (RFC 6052)
+    ipaddress.ip_network("64:ff9b:1::/48"),  # NAT64 local-use prefix (RFC 8215)
 ]
 
 _ALLOWED_SCHEMES = {"http", "https"}
+
+# TTL-based DNS cache to avoid repeated lookups for the same hostname.
+_DNS_CACHE: dict[str, tuple[list | None, float]] = {}
+_DNS_CACHE_TTL = 60       # positive cache: 60s
+_DNS_NEG_CACHE_TTL = 5    # negative cache (failures): 5s
+_DNS_CACHE_MAX = 10_000
+
+
+def _evict_dns_cache(now: float) -> None:
+    """Evict stale entries; if still over capacity, evict oldest (LRU)."""
+    global _DNS_CACHE
+    if len(_DNS_CACHE) <= _DNS_CACHE_MAX:
+        return
+    # First pass: remove expired entries
+    cutoff = now - _DNS_CACHE_TTL
+    fresh = {k: v for k, v in _DNS_CACHE.items() if v[1] > cutoff}
+    # Second pass: if still over capacity (all entries fresh during a burst),
+    # evict oldest entries to cap at max size.  Without this, an attacker can
+    # flood the cache with unique hostnames within a single TTL window.
+    if len(fresh) > _DNS_CACHE_MAX:
+        sorted_items = sorted(fresh.items(), key=lambda x: x[1][1])
+        fresh = dict(sorted_items[-_DNS_CACHE_MAX:])
+    _DNS_CACHE = fresh
+
+
+def _cached_getaddrinfo(hostname: str) -> list | None:
+    """DNS lookup with TTL cache. Returns addrinfo list or None on failure."""
+    global _DNS_CACHE
+    now = _time.monotonic()
+    cached = _DNS_CACHE.get(hostname)
+    if cached is not None:
+        result, ts = cached
+        ttl = _DNS_CACHE_TTL if result is not None else _DNS_NEG_CACHE_TTL
+        if (now - ts) < ttl:
+            return result
+
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError):
+        _DNS_CACHE[hostname] = (None, now)
+        _evict_dns_cache(now)
+        return None
+
+    _DNS_CACHE[hostname] = (infos, now)
+    _evict_dns_cache(now)
+    return infos
 
 
 def _normalize_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
@@ -125,18 +177,17 @@ def validate_origin_url(url: str, *, strict_dns: bool = False) -> str | None:
     except OSError:
         pass  # Not a valid IPv4 representation in any notation
 
-    # DNS resolution check for hostnames
-    try:
-        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        for info in infos:
-            addr = ipaddress.ip_address(info[4][0])
-            if _is_blocked(addr):
-                return f"Hostname '{hostname}' resolves to blocked IP"
-    except (socket.gaierror, UnicodeError):
-        # UnicodeError: getaddrinfo raises UnicodeEncodeError for hostnames
-        # containing Unicode chars that can't be IDNA-encoded (e.g. U+2029).
+    # DNS resolution check for hostnames (cached with TTL)
+    infos = _cached_getaddrinfo(hostname)
+    if infos is None:
         if strict_dns:
             return f"DNS resolution failed for hostname '{hostname}'"
         # Non-strict: allow through (upstream will fail naturally)
+        return None
+
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0])
+        if _is_blocked(addr):
+            return f"Hostname '{hostname}' resolves to blocked IP"
 
     return None

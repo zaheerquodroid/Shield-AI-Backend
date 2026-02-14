@@ -132,6 +132,15 @@ def load_settings() -> ProxySettings:
         secrets_provider=new_settings.secrets_provider,
     )
     _settings = new_settings  # atomic swap
+
+    # Atomically set cached RLS flag to match new settings.  Using set_rls_cache
+    # instead of invalidate eliminates the race window between the swap above
+    # and a re-read from get_settings() — in signal handlers this window is
+    # negligible, but atomic set is strictly safer.
+    from proxy.store.rls import set_rls_cache
+
+    set_rls_cache(new_settings.rls_enabled)
+
     return _settings
 
 

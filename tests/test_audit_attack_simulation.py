@@ -13,7 +13,6 @@ Simulates real-world attack vectors from OWASP and security research:
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 from contextlib import asynccontextmanager
@@ -68,18 +67,18 @@ def _make_context(tenant_id: str = "tenant-1") -> RequestContext:
     return ctx
 
 
+_AUDIT_FIELDS = ("tenant_id", "app_id", "request_id", "timestamp", "method", "path",
+                 "status_code", "duration_ms", "client_ip", "user_agent", "country",
+                 "user_id", "action", "blocked")
+
 async def _capture_audit(logger, req, ctx, response):
-    """Run process_request + process_response and capture the insert kwargs."""
+    """Run process_request + process_response and capture the audit row as a dict."""
     await logger.process_request(req, ctx)
-    captured = {}
-
-    async def _cap(**kwargs):
-        captured.update(kwargs)
-
-    with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_cap):
-        await logger.process_response(response, ctx)
-        await asyncio.sleep(0.01)
-    return captured
+    await logger.process_response(response, ctx)
+    if logger._queue.empty():
+        return {}
+    row = logger._queue.get_nowait()
+    return dict(zip(_AUDIT_FIELDS, row))
 
 
 # ===================================================================
@@ -212,13 +211,9 @@ class TestXFFSpoofing:
         await logger.process_request(req, ctx)
         response = Response(content="OK", status_code=200)
 
-        captured = {}
-        async def _cap(**kwargs):
-            captured.update(kwargs)
-
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_cap):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
+        await logger.process_response(response, ctx)
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
         # Must use direct peer IP, NOT the spoofed first XFF entry
         assert captured["client_ip"] == "203.0.113.99"
@@ -236,13 +231,9 @@ class TestXFFSpoofing:
         await logger.process_request(req, ctx)
         response = Response(content="OK", status_code=200)
 
-        captured = {}
-        async def _cap(**kwargs):
-            captured.update(kwargs)
-
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_cap):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
+        await logger.process_response(response, ctx)
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
         # Direct IP used, fits in VARCHAR(45)
         assert len(captured["client_ip"]) <= 45
@@ -259,13 +250,9 @@ class TestXFFSpoofing:
         await logger.process_request(req, ctx)
         response = Response(content="OK", status_code=200)
 
-        captured = {}
-        async def _cap(**kwargs):
-            captured.update(kwargs)
-
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_cap):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
+        await logger.process_response(response, ctx)
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
         assert captured["client_ip"] == "10.0.0.1"  # Direct IP, not XFF
 
@@ -378,7 +365,6 @@ class TestSQLInjection:
         from proxy.store.audit import query_audit_logs
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
         mock_pool = MagicMock()
         mock_pool.acquire = MagicMock()
@@ -392,7 +378,7 @@ class TestSQLInjection:
                 action="login'; DROP TABLE audit_logs; --",
             )
 
-        sql = mock_conn.fetchrow.call_args[0][0]
+        sql = mock_conn.fetch.call_args[0][0]
         assert "DROP" not in sql
 
     @pytest.mark.asyncio
@@ -401,7 +387,6 @@ class TestSQLInjection:
         from proxy.store.audit import query_audit_logs
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
         mock_pool = MagicMock()
         mock_pool.acquire = MagicMock()
@@ -415,7 +400,7 @@ class TestSQLInjection:
                 path="' UNION SELECT * FROM customers --",
             )
 
-        sql = mock_conn.fetchrow.call_args[0][0]
+        sql = mock_conn.fetch.call_args[0][0]
         assert "UNION" not in sql
         assert "SELECT * FROM customers" not in sql
 
@@ -425,7 +410,6 @@ class TestSQLInjection:
         from proxy.store.audit import query_audit_logs
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
         mock_pool = MagicMock()
         mock_pool.acquire = MagicMock()
@@ -439,7 +423,7 @@ class TestSQLInjection:
                 user_id="1; DELETE FROM audit_logs WHERE 1=1; --",
             )
 
-        sql = mock_conn.fetchrow.call_args[0][0]
+        sql = mock_conn.fetch.call_args[0][0]
         assert "DELETE" not in sql
 
 
@@ -507,12 +491,9 @@ class TestFieldOverflow:
         await logger.process_request(req, ctx)
         response = Response(content="OK", status_code=200)
 
-        captured = {}
-        async def _cap(**kwargs):
-            captured.update(kwargs)
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_cap):
-            await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
+        await logger.process_response(response, ctx)
+        row = logger._queue.get_nowait()
+        captured = dict(zip(_AUDIT_FIELDS, row))
 
         assert len(captured["country"]) <= 8
 
@@ -598,7 +579,6 @@ class TestTenantIsolation:
         from proxy.store.audit import query_audit_logs
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
         mock_conn.fetch = AsyncMock(return_value=[])
         mock_pool = MagicMock()
         mock_pool.acquire = MagicMock()
@@ -609,7 +589,7 @@ class TestTenantIsolation:
              patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="tenant-1")
 
-        sql = mock_conn.fetchrow.call_args[0][0]
+        sql = mock_conn.fetch.call_args[0][0]
         assert "tenant_id = $1" in sql
 
         # The tenant_id is ALWAYS the first condition — cannot be removed
@@ -640,25 +620,17 @@ class TestResourceExhaustion:
         assert _MAX_QUERY_LIMIT == 1000
 
     def test_bounded_task_queue(self):
-        """Pending audit tasks capped at 1000 to prevent memory exhaustion."""
+        """Pending audit tasks capped at 10000 to prevent memory exhaustion."""
         logger = AuditLogger()
-        assert logger._pending.maxlen == 1000
+        assert logger._queue.maxsize == 10000
 
     @pytest.mark.asyncio
     async def test_insert_failure_does_not_block_response(self):
-        """Even if all inserts fail, responses are returned immediately."""
+        """Even with audit queueing, responses are returned immediately."""
         logger = AuditLogger()
         req = _make_request()
         ctx = _make_context()
         await logger.process_request(req, ctx)
-
         response = Response(content="OK", status_code=200)
-
-        async def _explode(**kwargs):
-            raise ConnectionError("DB pool exhausted")
-
-        with patch("proxy.middleware.audit_logger.insert_audit_log", side_effect=_explode):
-            result = await logger.process_response(response, ctx)
-            await asyncio.sleep(0.01)
-
+        result = await logger.process_response(response, ctx)
         assert result.status_code == 200

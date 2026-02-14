@@ -351,13 +351,13 @@ class TestAC5_DefaultConfig:
         """Default origin URL is localhost:3000."""
         assert _DEFAULT_CONFIG["origin_url"] == "http://localhost:3000"
 
-    def test_default_config_is_deepcopied(self):
-        """Each call to get_config returns a fresh copy (mutations don't leak)."""
+    def test_default_config_is_immutable(self):
+        """Default config is immutable (MappingProxyType prevents mutation)."""
         service = CustomerConfigService()
-        config1 = service.get_config("unknown1.com")
-        config2 = service.get_config("unknown2.com")
-        config1["origin_url"] = "http://mutated"
-        assert config2["origin_url"] == "http://localhost:3000"
+        config = service.get_config("unknown1.com")
+        with pytest.raises(TypeError):
+            config["origin_url"] = "http://mutated"
+        assert config["origin_url"] == "http://localhost:3000"
 
     def test_database_unavailable_returns_503(self, api_client):
         """API returns 503 when PostgreSQL is unavailable."""

@@ -255,8 +255,13 @@ class LLMSanitizer(Middleware):
         if not isinstance(data, dict):
             return None
 
-        # Extract all string fields
-        string_fields = _extract_string_fields(data)
+        # Extract all string fields (reuse cached result from SSRF validator if available)
+        _cache_key = "_extracted_string_fields"
+        if _cache_key in context.extra:
+            string_fields = context.extra[_cache_key]
+        else:
+            string_fields = _extract_string_fields(data)
+            context.extra[_cache_key] = string_fields
         if not string_fields:
             return None
 

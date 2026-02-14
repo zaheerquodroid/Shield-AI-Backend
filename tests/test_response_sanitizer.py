@@ -1115,9 +1115,10 @@ class TestStatusCodePreservation:
 class TestMultiPatternDetection:
     @pytest.mark.asyncio
     async def test_multiple_patterns_all_logged(self):
-        """When multiple patterns match, all are logged."""
+        """When multiple patterns match in log_only mode, all are logged."""
         mw = ResponseSanitizer()
-        ctx = _make_context()
+        # Use log_only mode to get full pattern list (sanitize mode early-exits)
+        ctx = _make_context(sanitizer_mode="log_only")
         body = (
             "Traceback (most recent call last):\n"
             '  File "/app/db.py", line 10\n'
@@ -1135,6 +1136,19 @@ class TestMultiPatternDetection:
         assert "postgres_driver_error" in patterns
         assert "connection_string" in patterns
         assert "env_var_leak" in patterns
+
+    @pytest.mark.asyncio
+    async def test_sanitize_mode_replaces_body(self):
+        """In sanitize mode, sensitive content is replaced even with early-exit detection."""
+        mw = ResponseSanitizer()
+        ctx = _make_context()
+        body = (
+            "Traceback (most recent call last):\n"
+            "asyncpg.PostgresError: connection failed\n"
+            "DATABASE_URL = postgresql://admin:secret@db:5432/prod\n"
+        )
+        response = Response(content=body, status_code=500)
+        result = await mw.process_response(response, ctx)
 
         # Sanitized body must not contain ANY of the original content
         result_body = result.body.decode()

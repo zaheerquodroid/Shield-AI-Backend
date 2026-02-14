@@ -539,16 +539,13 @@ class TestSecurityEventWebhookIntegration:
         # Simulate WAF block
         ctx.extra["_waf_blocked"] = True
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock), \
-             patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock) as mock_dispatch:
+        with patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock) as mock_dispatch:
             await al.process_response(resp, ctx)
             # Give asyncio tasks a chance to be created
             await asyncio.sleep(0.01)
 
-        # The dispatch was called via asyncio.create_task, so it may
-        # not be directly captured. Verify the task was created by
-        # checking the pending deque has tasks.
-        assert len(al._pending) >= 1
+        # Verify audit row was queued
+        assert al._queue.qsize() >= 1
 
     @pytest.mark.asyncio
     async def test_normal_request_no_webhook(self):
@@ -561,14 +558,13 @@ class TestSecurityEventWebhookIntegration:
 
         await al.process_request(req, ctx)
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock), \
-             patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock) as mock_dispatch:
+        with patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock) as mock_dispatch:
             await al.process_response(resp, ctx)
 
         # For a normal GET /api/data returning 200, action is "api_read"
         # which is NOT in SECURITY_EVENTS, so no webhook task for dispatch
-        # Only 1 pending task (the audit insert)
-        assert len(al._pending) == 1
+        # Only 1 audit row queued
+        assert al._queue.qsize() == 1
 
     @pytest.mark.asyncio
     async def test_webhook_fires_when_audit_logging_disabled(self):
@@ -581,12 +577,11 @@ class TestSecurityEventWebhookIntegration:
 
         await al.process_request(req, ctx)
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock) as mock_insert, \
-             patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock):
+        with patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock):
             await al.process_response(resp, ctx)
 
-        # Audit insert should NOT have been called (audit_skip=True)
-        assert len(al._pending) == 0
+        # Audit queue should be empty (audit_skip=True)
+        assert al._queue.qsize() == 0
         # But a webhook task should be created for rate_limited (separate queue)
         assert len(al._pending_webhooks) == 1
 

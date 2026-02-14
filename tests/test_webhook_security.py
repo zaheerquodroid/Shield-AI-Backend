@@ -612,13 +612,12 @@ class TestLoginAttemptWebhookDispatch:
         resp = MagicMock(spec=["status_code", "headers"])
         resp.status_code = 200
 
-        with patch("proxy.middleware.audit_logger.insert_audit_log", new_callable=AsyncMock), \
-             patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock) as mock_dispatch:
+        with patch("proxy.middleware.audit_logger.dispatch_webhook_event", new_callable=AsyncMock) as mock_dispatch:
             await al.process_response(resp, ctx)
             await asyncio.sleep(0.01)
 
-        # Should have 1 audit task in _pending + 1 webhook task in _pending_webhooks
-        assert len(al._pending) == 1
+        # Should have 1 audit row in queue + 1 webhook task in _pending_webhooks
+        assert al._queue.qsize() == 1
         assert len(al._pending_webhooks) == 1
 
 

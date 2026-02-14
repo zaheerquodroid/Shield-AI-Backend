@@ -15,7 +15,7 @@ from starlette.responses import Response
 from proxy.config.audit_actions import classify_action
 from proxy.config.webhook import SECURITY_EVENTS, dispatch_webhook_event
 from proxy.middleware.pipeline import Middleware, RequestContext
-from proxy.store.audit import insert_audit_log
+from proxy.store.audit import batch_insert_audit_logs
 
 logger = structlog.get_logger()
 
@@ -37,8 +37,11 @@ _MAX_APPID_LENGTH = 255
 _MAX_REQUESTID_LENGTH = 64
 _MAX_ACTION_LENGTH = 64
 _MAX_COUNTRY_LENGTH = 8
-_MAX_PENDING_AUDIT_TASKS = 1000
+_MAX_AUDIT_QUEUE_SIZE = 10_000
 _MAX_PENDING_WEBHOOK_TASKS = 500
+_FLUSH_INTERVAL = 0.5     # seconds between flushes
+_FLUSH_BATCH_SIZE = 500   # max rows per flush
+_MAX_FLUSH_RETRIES = 3    # max consecutive failures before dropping rows
 
 
 def _sanitize(value: str, max_length: int) -> str:
@@ -50,18 +53,94 @@ class AuditLogger(Middleware):
     """Log every request/response to the audit_logs table.
 
     process_request: captures timing start and request metadata.
-    process_response: computes duration, classifies action, fires async insert.
+    process_response: computes duration, classifies action, queues row for batch insert.
 
+    Uses an asyncio.Queue + background flush loop for batched inserts.
     Fail-open: errors are logged but never propagate.
-    Bounded task queue: max 1000 pending inserts to prevent memory growth.
 
     Also dispatches webhook events for security-related actions (waf_blocked,
     rate_limited, session_blocked) independent of the audit_logging feature flag.
     """
 
     def __init__(self) -> None:
-        self._pending: deque[asyncio.Task] = deque(maxlen=_MAX_PENDING_AUDIT_TASKS)
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=_MAX_AUDIT_QUEUE_SIZE)
+        self._flush_task: asyncio.Task | None = None
         self._pending_webhooks: deque[asyncio.Task] = deque(maxlen=_MAX_PENDING_WEBHOOK_TASKS)
+        self._shutdown = False
+        self._consecutive_failures = 0
+
+    async def start(self) -> None:
+        """Start the background flush loop."""
+        self._shutdown = False
+        self._flush_task = asyncio.create_task(self._flush_loop())
+
+    async def stop(self) -> None:
+        """Drain queue and stop flush loop."""
+        self._shutdown = True
+        if self._flush_task:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+        # Final drain — loop until queue is fully empty (not just one batch)
+        while not self._queue.empty():
+            await self._flush_batch()
+        # Cancel pending webhook tasks
+        for t in self._pending_webhooks:
+            if not t.done():
+                t.cancel()
+
+    async def _flush_loop(self) -> None:
+        """Flush audit rows every 500ms."""
+        while not self._shutdown:
+            await asyncio.sleep(_FLUSH_INTERVAL)
+            await self._flush_batch()
+
+    async def _flush_batch(self) -> None:
+        """Drain queue into a batch insert."""
+        rows = []
+        while not self._queue.empty() and len(rows) < _FLUSH_BATCH_SIZE:
+            try:
+                rows.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        if rows:
+            try:
+                await batch_insert_audit_logs(rows)
+                self._consecutive_failures = 0  # Reset on success
+            except Exception:
+                self._consecutive_failures += 1
+                logger.exception(
+                    "audit_batch_flush_failed",
+                    count=len(rows),
+                    consecutive_failures=self._consecutive_failures,
+                )
+                # Re-queue rows only if under retry limit and not shutting down.
+                # Without a retry limit, a persistent DB failure would cause an
+                # infinite dequeue-fail-requeue loop (audit evasion via DoS).
+                if not self._shutdown and self._consecutive_failures < _MAX_FLUSH_RETRIES:
+                    requeued = 0
+                    for row in rows:
+                        try:
+                            self._queue.put_nowait(row)
+                            requeued += 1
+                        except asyncio.QueueFull:
+                            break
+                    if requeued < len(rows):
+                        logger.error(
+                            "audit_rows_lost",
+                            lost=len(rows) - requeued,
+                            requeued=requeued,
+                        )
+                else:
+                    # Max retries exceeded or shutting down — drop rows to
+                    # prevent infinite retry loop.
+                    logger.error(
+                        "audit_rows_dropped_max_retries",
+                        dropped=len(rows),
+                        consecutive_failures=self._consecutive_failures,
+                    )
 
     async def process_request(self, request: Request, context: RequestContext) -> Request | Response | None:
         # Check feature flag — but always capture metadata for webhooks
@@ -129,40 +208,34 @@ class AuditLogger(Middleware):
         user_id = (context.user_id or "")[:_MAX_USERID_LENGTH]
         action = action[:_MAX_ACTION_LENGTH]
 
-        # Fire audit insert (only if audit logging is enabled)
+        # Queue audit row for batch insert (only if audit logging is enabled)
         if not context.extra.get("_audit_skip"):
+            row = (
+                context.tenant_id,
+                app_id,
+                request_id,
+                datetime.now(timezone.utc),
+                method,
+                path,
+                status_code,
+                round(duration_ms, 2),
+                client_ip,
+                user_agent,
+                country,
+                user_id,
+                action,
+                is_blocked,
+            )
             try:
-                task = asyncio.create_task(
-                    insert_audit_log(
-                        tenant_id=context.tenant_id,
-                        app_id=app_id,
-                        request_id=request_id,
-                        timestamp=datetime.now(timezone.utc),
-                        method=method,
-                        path=path,
-                        status_code=status_code,
-                        duration_ms=round(duration_ms, 2),
-                        client_ip=client_ip,
-                        user_agent=user_agent,
-                        country=country,
-                        user_id=user_id,
-                        action=action,
-                        blocked=is_blocked,
-                    )
+                self._queue.put_nowait(row)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "audit_queue_full",
+                    dropped=True,
+                    queue_size=self._queue.maxsize,
+                    tenant_id=context.tenant_id,
+                    request_id=context.request_id,
                 )
-                # Done callback: log unexpected exceptions instead of swallowing.
-                def _audit_done(t: asyncio.Task) -> None:
-                    if t.done() and not t.cancelled():
-                        exc = t.exception()
-                        if exc:
-                            logger.error("audit_task_exception", error=str(exc))
-
-                task.add_done_callback(_audit_done)
-                if len(self._pending) >= _MAX_PENDING_AUDIT_TASKS:
-                    logger.warning("audit_task_queue_full", dropped=True)
-                self._pending.append(task)
-            except Exception:
-                logger.exception("audit_task_create_failed")
 
         # Dispatch webhook for security events (independent of audit_logging flag).
         # Uses a SEPARATE bounded queue so slow webhooks cannot evict audit tasks.

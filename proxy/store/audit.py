@@ -69,6 +69,63 @@ async def insert_audit_log(
         logger.exception("audit_insert_failed", tenant_id=tenant_id, request_id=request_id)
 
 
+async def batch_insert_audit_logs(rows: list[tuple]) -> int:
+    """Insert multiple audit log rows, grouped by tenant for efficient RLS.
+
+    Returns count of successfully inserted rows.
+    """
+    pool = get_pool()
+    if pool is None:
+        return 0
+
+    inserted = 0
+    # Group by tenant_id (first element) to minimize RLS context switches
+    by_tenant: dict[str, list[tuple]] = {}
+    for row in rows:
+        tid = row[0]
+        by_tenant.setdefault(tid, []).append(row)
+
+    for tenant_id, tenant_rows in by_tenant.items():
+        try:
+            async with tenant_transaction(tenant_id) as conn:
+                await conn.executemany(
+                    """INSERT INTO audit_logs
+                       (tenant_id, app_id, request_id, timestamp, method, path,
+                        status_code, duration_ms, client_ip, user_agent, country,
+                        user_id, action, blocked)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
+                    tenant_rows,
+                )
+                inserted += len(tenant_rows)
+        except Exception:
+            # Batch failed — fall back to per-row inserts so one bad row
+            # doesn't cause the entire tenant's audit logs to be lost.
+            logger.warning(
+                "batch_audit_insert_failed_fallback",
+                tenant_id=tenant_id,
+                count=len(tenant_rows),
+            )
+            for row in tenant_rows:
+                try:
+                    async with tenant_transaction(tenant_id) as conn:
+                        await conn.execute(
+                            """INSERT INTO audit_logs
+                               (tenant_id, app_id, request_id, timestamp, method, path,
+                                status_code, duration_ms, client_ip, user_agent, country,
+                                user_id, action, blocked)
+                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
+                            *row,
+                        )
+                        inserted += 1
+                except Exception:
+                    logger.exception(
+                        "audit_row_insert_failed",
+                        tenant_id=tenant_id,
+                        request_id=row[2] if len(row) > 2 else "",
+                    )
+    return inserted
+
+
 async def query_audit_logs(
     *,
     tenant_id: str,
@@ -83,15 +140,16 @@ async def query_audit_logs(
     user_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> tuple[list[dict[str, Any]], int]:
-    """Query audit logs with filters. Returns (rows, total_count).
+) -> tuple[list[dict[str, Any]], bool]:
+    """Query audit logs with filters. Returns (rows, has_more).
 
+    Uses LIMIT+1 pattern instead of COUNT(*) for efficient pagination.
     All filters use parameterized SQL. Limit is clamped to 1000.
     RLS ensures only rows for *tenant_id* are visible.
     """
     pool = get_pool()
     if pool is None:
-        return ([], 0)
+        return ([], False)
 
     limit = max(1, min(limit, _MAX_QUERY_LIMIT))
     offset = max(0, offset)
@@ -150,18 +208,14 @@ async def query_audit_logs(
     where = " AND ".join(conditions)
 
     async with tenant_transaction(tenant_id) as conn:
-        count_row = await conn.fetchrow(
-            f"SELECT COUNT(*) AS total FROM audit_logs WHERE {where}",
-            *values,
-        )
-        total = count_row["total"] if count_row else 0
-
+        # Fetch limit+1 rows to detect if more rows exist beyond this page
         rows = await conn.fetch(
             f"SELECT * FROM audit_logs WHERE {where} ORDER BY timestamp DESC LIMIT ${idx} OFFSET ${idx + 1}",
-            *values, limit, offset,
+            *values, limit + 1, offset,
         )
 
-    return ([dict(r) for r in rows], total)
+    has_more = len(rows) > limit
+    return ([dict(r) for r in rows[:limit]], has_more)
 
 
 async def delete_old_audit_logs(tenant_id: str, retention_days: int) -> int:

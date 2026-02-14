@@ -61,11 +61,34 @@ def validate_tenant_id(tenant_id: str) -> str:
     return normalised
 
 
+_rls_enabled_cache: bool | None = None
+
+
 def _is_rls_enabled() -> bool:
-    """Check the ``rls_enabled`` setting without import-time side effects."""
+    """Check the ``rls_enabled`` setting with caching to avoid per-call import overhead."""
+    global _rls_enabled_cache
+    if _rls_enabled_cache is not None:
+        return _rls_enabled_cache
     from proxy.config.loader import get_settings  # noqa: PLC0415
 
-    return get_settings().rls_enabled
+    _rls_enabled_cache = get_settings().rls_enabled
+    return _rls_enabled_cache
+
+
+def invalidate_rls_cache() -> None:
+    """Clear the cached ``rls_enabled`` value. Called on config reload."""
+    global _rls_enabled_cache
+    _rls_enabled_cache = None
+
+
+def set_rls_cache(enabled: bool) -> None:
+    """Atomically set the cached ``rls_enabled`` value.
+
+    Preferred over :func:`invalidate_rls_cache` during SIGHUP reload to
+    eliminate the race window between settings swap and cache invalidation.
+    """
+    global _rls_enabled_cache
+    _rls_enabled_cache = enabled
 
 
 @asynccontextmanager
