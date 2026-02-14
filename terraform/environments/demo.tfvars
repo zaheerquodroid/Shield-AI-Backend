@@ -18,3 +18,6 @@ api_key_ssm_arn      = "arn:aws:ssm:us-east-1:ACCOUNT_ID:parameter/shieldai/demo
 waf_block_mode     = false
 enable_bot_control = false
 header_preset      = "balanced"
+
+# CloudFront — disabled by default for demo (opt-in)
+enable_cloudfront = false

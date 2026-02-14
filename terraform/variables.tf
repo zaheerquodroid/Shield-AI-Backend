@@ -149,3 +149,60 @@ variable "secrets_kms_deletion_window" {
   type        = number
   default     = 14
 }
+
+# --- CloudFront variables ---
+
+variable "enable_cloudfront" {
+  description = "Enable CloudFront distribution in front of ALB (opt-in)"
+  type        = bool
+  default     = false
+}
+
+variable "cloudfront_origin_verify_secret" {
+  description = "Shared secret for X-ShieldAI-Origin-Verify header (origin bypass prevention)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cloudfront_certificate_arn" {
+  description = "ACM certificate ARN in us-east-1 for CloudFront custom domains"
+  type        = string
+  default     = ""
+}
+
+variable "customer_domains" {
+  description = "List of tenant custom domain aliases for CloudFront"
+  type        = list(string)
+  default     = []
+}
+
+variable "cloudfront_price_class" {
+  description = "CloudFront price class (PriceClass_100, PriceClass_200, PriceClass_All)"
+  type        = string
+  default     = "PriceClass_100"
+}
+
+variable "cloudfront_geo_restriction_type" {
+  description = "CloudFront geo restriction type (none, whitelist, blacklist)"
+  type        = string
+  default     = "none"
+}
+
+variable "cloudfront_geo_restriction_locations" {
+  description = "ISO 3166-1 alpha-2 country codes for CloudFront geo restriction"
+  type        = list(string)
+  default     = []
+}
+
+variable "cloudfront_enable_logging" {
+  description = "Enable CloudFront access logging to S3"
+  type        = bool
+  default     = true
+}
+
+variable "cloudfront_log_bucket" {
+  description = "S3 bucket domain name for CloudFront access logs"
+  type        = string
+  default     = ""
+}

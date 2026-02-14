@@ -18,3 +18,13 @@ api_key_ssm_arn      = "arn:aws:ssm:us-east-1:ACCOUNT_ID:parameter/shieldai/prod
 waf_block_mode     = true
 enable_bot_control = false
 header_preset      = "strict"
+
+# CloudFront — enabled in production
+enable_cloudfront          = true
+cloudfront_price_class     = "PriceClass_100"
+cloudfront_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+cloudfront_enable_logging  = true
+cloudfront_log_bucket      = "shieldai-cloudfront-logs-prod.s3.amazonaws.com"
+# IMPORTANT: cloudfront_origin_verify_secret must be provided via:
+#   TF_VAR_cloudfront_origin_verify_secret or -var flag (>= 32 chars)
+# Do NOT hardcode secrets in tfvars files.

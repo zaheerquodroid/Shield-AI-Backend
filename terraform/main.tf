@@ -37,6 +37,11 @@ module "proxy_ecs" {
   redis_url_ssm_arn    = var.redis_url_ssm_arn
   postgres_url_ssm_arn = var.postgres_url_ssm_arn
   api_key_ssm_arn      = var.api_key_ssm_arn
+
+  # CloudFront origin protection (conditional)
+  restrict_to_cloudfront    = var.enable_cloudfront
+  origin_verify_secret      = var.cloudfront_origin_verify_secret
+  cloudfront_prefix_list_id = var.enable_cloudfront ? module.cloudfront_saas[0].cloudfront_prefix_list_id : ""
 }
 
 # ---------------------------------------------------------------------------
@@ -88,4 +93,38 @@ module "secrets" {
   rotation_days       = var.secrets_rotation_days
   rotation_lambda_arn = var.secrets_rotation_lambda_arn
   kms_deletion_window = var.secrets_kms_deletion_window
+}
+
+# ---------------------------------------------------------------------------
+# CloudFront SaaS Module — Multi-tenant CDN distribution with edge WAF
+# ---------------------------------------------------------------------------
+# Fail-safe: CloudFront WAF (CLOUDFRONT scope) must be created in us-east-1.
+# ACM certificates for CloudFront must also be in us-east-1.
+check "cloudfront_region_check" {
+  assert {
+    condition     = !var.enable_cloudfront || var.region == "us-east-1"
+    error_message = "CloudFront WAF and ACM certificates require us-east-1. Current region: ${var.region}. Either set region=us-east-1 or use a provider alias for the cloudfront_saas module."
+  }
+}
+
+module "cloudfront_saas" {
+  count  = var.enable_cloudfront ? 1 : 0
+  source = "./modules/cloudfront-saas"
+
+  environment                = var.environment
+  alb_dns_name               = module.proxy_ecs.alb_dns_name
+  response_headers_policy_id = module.security_headers.response_headers_policy_id
+  origin_verify_secret       = var.cloudfront_origin_verify_secret
+  cloudfront_certificate_arn = var.cloudfront_certificate_arn
+  customer_domains           = var.customer_domains
+  price_class                = var.cloudfront_price_class
+  geo_restriction_type       = var.cloudfront_geo_restriction_type
+  geo_restriction_locations  = var.cloudfront_geo_restriction_locations
+  waf_block_mode             = var.waf_block_mode
+  enable_bot_control         = var.enable_bot_control
+  auth_rate_limit            = var.auth_rate_limit
+  global_rate_limit          = var.global_rate_limit
+  login_path_pattern         = var.login_path_pattern
+  enable_logging             = var.cloudfront_enable_logging
+  log_bucket_domain_name     = var.cloudfront_log_bucket
 }

@@ -89,3 +89,24 @@ variable "enable_alb_access_logs" {
   type        = bool
   default     = false
 }
+
+# --- CloudFront origin protection ---
+
+variable "restrict_to_cloudfront" {
+  description = "When true, ALB only accepts traffic from CloudFront (origin bypass prevention)"
+  type        = bool
+  default     = false
+}
+
+variable "origin_verify_secret" {
+  description = "Shared secret for X-ShieldAI-Origin-Verify header verification"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cloudfront_prefix_list_id" {
+  description = "AWS managed prefix list ID for CloudFront IP ranges"
+  type        = string
+  default     = ""
+}

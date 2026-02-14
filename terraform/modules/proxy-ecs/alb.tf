@@ -2,26 +2,56 @@
 # ShieldAI Security Proxy — Application Load Balancer
 # -----------------------------------------------------------------------------
 
-# ALB Security Group — allow inbound 80 and 443 from anywhere
+# ALB Security Group — allow inbound 80 and 443 (optionally restricted to CloudFront)
 resource "aws_security_group" "alb" {
   name        = "shieldai-proxy-alb-${var.environment}"
   description = "Security group for the ShieldAI proxy ALB"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description = "HTTPS from anywhere"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  # When restrict_to_cloudfront is false, allow HTTPS from anywhere (backwards compatible)
+  dynamic "ingress" {
+    for_each = var.restrict_to_cloudfront ? [] : [1]
+    content {
+      description = "HTTPS from anywhere"
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
   }
 
-  ingress {
-    description = "HTTP from anywhere (redirected to HTTPS)"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  # When restrict_to_cloudfront is true, allow HTTPS only from CloudFront prefix list
+  dynamic "ingress" {
+    for_each = var.restrict_to_cloudfront ? [1] : []
+    content {
+      description     = "HTTPS from CloudFront only"
+      from_port       = 443
+      to_port         = 443
+      protocol        = "tcp"
+      prefix_list_ids = [var.cloudfront_prefix_list_id]
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.restrict_to_cloudfront ? [] : [1]
+    content {
+      description = "HTTP from anywhere (redirected to HTTPS)"
+      from_port   = 80
+      to_port     = 80
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.restrict_to_cloudfront ? [1] : []
+    content {
+      description     = "HTTP from CloudFront only (redirected to HTTPS)"
+      from_port       = 80
+      to_port         = 80
+      protocol        = "tcp"
+      prefix_list_ids = [var.cloudfront_prefix_list_id]
+    }
   }
 
   egress {
@@ -132,6 +162,55 @@ resource "aws_lb_listener" "https" {
     Name        = "shieldai-proxy-https-${var.environment}"
     Environment = var.environment
     ManagedBy   = "terraform"
+  }
+}
+
+# --- Origin Verify Header Check (defense-in-depth) ---
+# When CloudFront restriction is enabled, verify the X-ShieldAI-Origin-Verify
+# secret header. The ALB default action forwards all traffic, so we add a
+# higher-priority rule that FORWARDS only when the header matches, and a
+# lower-priority catch-all that BLOCKS everything else.
+#
+# Rule 1 (priority 1): Header matches → forward to target group (allow)
+# Rule 2 (priority 100): Catch-all → 403 (deny all other traffic)
+resource "aws_lb_listener_rule" "allow_verified_origin" {
+  count        = var.restrict_to_cloudfront && var.origin_verify_secret != "" ? 1 : 0
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 1
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.proxy.arn
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-ShieldAI-Origin-Verify"
+      values           = [var.origin_verify_secret]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "deny_unverified_origin" {
+  count        = var.restrict_to_cloudfront && var.origin_verify_secret != "" ? 1 : 0
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 100
+
+  action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Forbidden"
+      status_code  = "403"
+    }
+  }
+
+  # Match all paths — catch-all rule
+  condition {
+    path_pattern {
+      values = ["/*"]
+    }
   }
 }
 
