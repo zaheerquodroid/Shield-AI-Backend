@@ -1,0 +1,177 @@
+name: "ShieldAI Security Scan"
+description: "Composite GitHub Action for SAST, SCA, secret scanning, and container scanning with SARIF-based PR annotations"
+author: "ShieldAI"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  severity-threshold:
+    description: "Minimum severity to fail on: critical, high, medium, low, any"
+    required: false
+    default: "high"
+  python-enabled:
+    description: "Enable Python scanning (Bandit SAST + pip-audit SCA)"
+    required: false
+    default: "true"
+  javascript-enabled:
+    description: "Enable JavaScript scanning (eslint-security SAST + npm audit SCA)"
+    required: false
+    default: "true"
+  go-enabled:
+    description: "Enable Go scanning (govulncheck SCA)"
+    required: false
+    default: "false"
+  gitleaks-enabled:
+    description: "Enable secret scanning with gitleaks"
+    required: false
+    default: "true"
+  trivy-enabled:
+    description: "Enable container/IaC scanning with Trivy"
+    required: false
+    default: "true"
+  trivy-scan-type:
+    description: "Trivy scan type: fs, image, config"
+    required: false
+    default: "fs"
+  trivy-image-ref:
+    description: "Container image reference for Trivy image scan"
+    required: false
+    default: ""
+  sarif-upload:
+    description: "Upload merged SARIF to GitHub Code Scanning"
+    required: false
+    default: "true"
+  fail-on-findings:
+    description: "Fail the workflow if findings exceed severity threshold"
+    required: false
+    default: "true"
+
+outputs:
+  scan-result:
+    description: "Overall scan result: pass or fail"
+    value: ${{ steps.aggregate.outputs.scan-result }}
+  findings-count:
+    description: "Total number of findings"
+    value: ${{ steps.aggregate.outputs.findings-count }}
+  critical-count:
+    description: "Number of critical findings"
+    value: ${{ steps.aggregate.outputs.critical-count }}
+  high-count:
+    description: "Number of high findings"
+    value: ${{ steps.aggregate.outputs.high-count }}
+  medium-count:
+    description: "Number of medium findings"
+    value: ${{ steps.aggregate.outputs.medium-count }}
+  low-count:
+    description: "Number of low findings"
+    value: ${{ steps.aggregate.outputs.low-count }}
+  sarif-file:
+    description: "Path to the merged SARIF file"
+    value: ${{ steps.aggregate.outputs.sarif-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup scan results directory
+      id: setup
+      shell: bash
+      run: |
+        RESULTS_DIR="${RUNNER_TEMP}/shieldai-scan-results"
+        mkdir -p "${RESULTS_DIR}"
+        echo "results-dir=${RESULTS_DIR}" >> "${GITHUB_OUTPUT}"
+
+    - name: Run Bandit SAST (Python)
+      id: bandit
+      if: inputs.python-enabled == 'true'
+      shell: bash
+      run: |
+        pip install bandit --quiet
+        bandit -r . -f sarif --exit-zero \
+          -o "${{ steps.setup.outputs.results-dir }}/bandit.sarif" || true
+
+    - name: Run pip-audit SCA (Python)
+      id: pip-audit
+      if: inputs.python-enabled == 'true'
+      shell: bash
+      run: |
+        pip install pip-audit --quiet
+        pip-audit --format=json --output="$RUNNER_TEMP/pip-audit-raw.json" --exit-zero || true
+        python "${{ github.action_path }}/scripts/pip_audit_to_sarif.py" \
+          "$RUNNER_TEMP/pip-audit-raw.json" \
+          "${{ steps.setup.outputs.results-dir }}/pip-audit.sarif"
+
+    - name: Run eslint-security SAST (JavaScript)
+      id: eslint-security
+      if: inputs.javascript-enabled == 'true'
+      shell: bash
+      run: |
+        npm install eslint @microsoft/eslint-formatter-sarif eslint-plugin-security --no-save --quiet 2>/dev/null || true
+        npx eslint . --format @microsoft/eslint-formatter-sarif \
+          -o "${{ steps.setup.outputs.results-dir }}/eslint.sarif" || true
+
+    - name: Run npm audit SCA (JavaScript)
+      id: npm-audit
+      if: inputs.javascript-enabled == 'true' && hashFiles('package-lock.json') != ''
+      shell: bash
+      run: |
+        npm audit --json > "$RUNNER_TEMP/npm-audit-raw.json" || true
+        python "${{ github.action_path }}/scripts/npm_audit_to_sarif.py" \
+          "$RUNNER_TEMP/npm-audit-raw.json" \
+          "${{ steps.setup.outputs.results-dir }}/npm-audit.sarif"
+
+    - name: Run govulncheck SCA (Go)
+      id: govulncheck
+      if: inputs.go-enabled == 'true'
+      shell: bash
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck -json ./... > "$RUNNER_TEMP/govulncheck-raw.json" || true
+        python "${{ github.action_path }}/scripts/go_vuln_to_sarif.py" \
+          "$RUNNER_TEMP/govulncheck-raw.json" \
+          "${{ steps.setup.outputs.results-dir }}/govulncheck.sarif"
+
+    - name: Run gitleaks secret scanning
+      id: gitleaks
+      if: inputs.gitleaks-enabled == 'true'
+      uses: gitleaks/gitleaks-action@v2
+      with:
+        args: --report-format sarif --report-path "${{ steps.setup.outputs.results-dir }}/gitleaks.sarif" --exit-code 0
+
+    - name: Run Trivy scanner
+      id: trivy
+      if: inputs.trivy-enabled == 'true'
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        scan-type: ${{ inputs.trivy-scan-type }}
+        image-ref: ${{ inputs.trivy-image-ref }}
+        format: "sarif"
+        output: "${{ steps.setup.outputs.results-dir }}/trivy.sarif"
+        exit-code: "0"
+
+    - name: Aggregate SARIF results
+      id: aggregate
+      if: always()
+      shell: bash
+      env:
+        INPUT_THRESHOLD: ${{ inputs.severity-threshold }}
+        INPUT_FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+        RESULTS_DIR: ${{ steps.setup.outputs.results-dir }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        python "${ACTION_PATH}/scripts/aggregate_sarif.py" \
+          --results-dir "${RESULTS_DIR}" \
+          --threshold "${INPUT_THRESHOLD}" \
+          --output-sarif "${RESULTS_DIR}/merged.sarif" \
+          --github-output "${GITHUB_OUTPUT}" \
+          --fail-on-findings "${INPUT_FAIL_ON_FINDINGS}"
+
+    - name: Upload SARIF to GitHub Code Scanning
+      id: upload-sarif
+      if: inputs.sarif-upload == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: "${{ steps.setup.outputs.results-dir }}/merged.sarif"
+        category: "shieldai-security-scan"
