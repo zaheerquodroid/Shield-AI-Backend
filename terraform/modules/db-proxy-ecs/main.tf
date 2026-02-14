@@ -72,6 +72,15 @@ resource "aws_ecs_task_definition" "db_proxy" {
           protocol      = "tcp"
         }
       ]
+
+      # Row-Level Security: the shieldai_app NOLOGIN role must exist
+      # in the target PostgreSQL database. See proxy/models/schema.sql.
+      environment = [
+        {
+          name  = "PROXY_RLS_ENABLED"
+          value = "true"
+        }
+      ]
     }
   ])
 

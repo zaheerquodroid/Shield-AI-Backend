@@ -16,6 +16,7 @@ import csv
 import io
 import time
 from collections import deque
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -36,6 +37,14 @@ from proxy.store.audit import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _mock_tenant_tx(mock_conn):
+    """Return a mock tenant_transaction that yields *mock_conn*."""
+    @asynccontextmanager
+    async def _tx(tenant_id):
+        yield mock_conn
+    return _tx
 
 
 def _make_request(
@@ -329,7 +338,8 @@ class TestAC2_RetentionByPlan:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             deleted = await delete_old_audit_logs("tenant-1", 30)
 
         assert deleted == 5
@@ -365,7 +375,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             rows, total = await query_audit_logs(tenant_id="t1")
 
         assert total == 1
@@ -389,7 +400,8 @@ class TestAC3_QueryFilters:
         start = datetime(2025, 1, 1, tzinfo=timezone.utc)
         end = datetime(2025, 12, 31, tzinfo=timezone.utc)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             rows, total = await query_audit_logs(
                 tenant_id="t1", start_time=start, end_time=end,
             )
@@ -410,7 +422,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", method="POST")
 
         count_sql = mock_conn.fetchrow.call_args[0][0]
@@ -428,7 +441,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", path="/api")
 
         count_sql = mock_conn.fetchrow.call_args[0][0]
@@ -445,7 +459,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", status_code=429)
 
         count_sql = mock_conn.fetchrow.call_args[0][0]
@@ -462,7 +477,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", action="rate_limited")
 
         count_sql = mock_conn.fetchrow.call_args[0][0]
@@ -479,7 +495,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", blocked=True)
 
         count_sql = mock_conn.fetchrow.call_args[0][0]
@@ -496,7 +513,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", user_id="user-42")
 
         count_sql = mock_conn.fetchrow.call_args[0][0]
@@ -514,7 +532,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             _, total = await query_audit_logs(tenant_id="t1", limit=10, offset=20)
 
         assert total == 100
@@ -534,7 +553,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", limit=5000)
 
         # The limit arg passed should be 1000, not 5000
@@ -554,7 +574,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1")
 
         fetch_sql = mock_conn.fetch.call_args[0][0]
@@ -580,7 +601,8 @@ class TestAC3_QueryFilters:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="t1", path="100%_done")
 
         # The path value passed should have % and _ escaped.

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -195,6 +196,14 @@ class TestUserinfoSSRF:
 # 4. Negative retention_days attack
 # ===========================================================================
 
+def _mock_tenant_tx(mock_conn):
+    """Return a mock tenant_transaction that yields *mock_conn*."""
+    @asynccontextmanager
+    async def _tx(tenant_id):
+        yield mock_conn
+    return _tx
+
+
 class TestNegativeRetentionDays:
     """Negative retention_days must not delete all audit logs."""
 
@@ -227,7 +236,8 @@ class TestNegativeRetentionDays:
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             result = await delete_old_audit_logs("tenant-1", 1)
         assert result == 3
 
@@ -240,7 +250,8 @@ class TestNegativeRetentionDays:
         mock_pool = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await delete_old_audit_logs("tenant-1", 30)
         sql = mock_conn.execute.call_args[0][0]
         assert "make_interval" in sql

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -30,6 +31,13 @@ from proxy.api.audit_routes import _csv_safe, _rows_to_csv, _parse_datetime
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _mock_tenant_tx(mock_conn):
+    """Return a mock tenant_transaction that yields *mock_conn*."""
+    @asynccontextmanager
+    async def _tx(tenant_id):
+        yield mock_conn
+    return _tx
 
 def _make_request(
     method: str = "GET",
@@ -347,27 +355,22 @@ class TestSQLInjection:
     """Attacker sends SQL injection payloads in audit log query filters."""
 
     @pytest.mark.asyncio
-    async def test_sqli_in_tenant_id_parameterized(self):
-        """SQL injection in tenant_id is harmless (parameterized query)."""
+    async def test_sqli_in_tenant_id_rejected_by_rls(self):
+        """SQL injection in tenant_id is rejected by RLS validate_tenant_id
+        before it ever reaches the SQL query (defense-in-depth)."""
         from proxy.store.audit import query_audit_logs
+        from proxy.store.rls import validate_tenant_id
 
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
-        mock_conn.fetch = AsyncMock(return_value=[])
+        # validate_tenant_id rejects non-UUID strings
+        with pytest.raises(ValueError):
+            validate_tenant_id("' OR '1'='1' --")
+
+        # query_audit_logs with a non-UUID tenant_id raises ValueError
+        # from tenant_transaction → validate_tenant_id
         mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-
         with patch("proxy.store.audit.get_pool", return_value=mock_pool):
-            await query_audit_logs(tenant_id="' OR '1'='1' --")
-
-        # The malicious string is passed as a parameter, NOT interpolated into SQL
-        sql = mock_conn.fetchrow.call_args[0][0]
-        assert "OR" not in sql  # SQL itself doesn't contain the injection
-        # The injected value is passed as $1 parameter
-        param = mock_conn.fetchrow.call_args[0][1]
-        assert param == "' OR '1'='1' --"
+            with pytest.raises(ValueError):
+                await query_audit_logs(tenant_id="' OR '1'='1' --")
 
     @pytest.mark.asyncio
     async def test_sqli_in_action_filter(self):
@@ -382,7 +385,8 @@ class TestSQLInjection:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(
                 tenant_id="t1",
                 action="login'; DROP TABLE audit_logs; --",
@@ -404,7 +408,8 @@ class TestSQLInjection:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(
                 tenant_id="t1",
                 path="' UNION SELECT * FROM customers --",
@@ -427,7 +432,8 @@ class TestSQLInjection:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(
                 tenant_id="t1",
                 user_id="1; DELETE FROM audit_logs WHERE 1=1; --",
@@ -599,7 +605,8 @@ class TestTenantIsolation:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("proxy.store.audit.get_pool", return_value=mock_pool):
+        with patch("proxy.store.audit.get_pool", return_value=mock_pool), \
+             patch("proxy.store.audit.tenant_transaction", _mock_tenant_tx(mock_conn)):
             await query_audit_logs(tenant_id="tenant-1")
 
         sql = mock_conn.fetchrow.call_args[0][0]
@@ -611,25 +618,13 @@ class TestTenantIsolation:
 
     @pytest.mark.asyncio
     async def test_wildcard_tenant_not_possible(self):
-        """Passing '*' or '%' as tenant_id doesn't bypass tenant filter."""
-        from proxy.store.audit import query_audit_logs
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"total": 0})
-        mock_conn.fetch = AsyncMock(return_value=[])
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+        """Passing '*' or '%' as tenant_id is now rejected by RLS
+        validate_tenant_id (defense-in-depth). Non-UUID strings never reach SQL."""
+        from proxy.store.rls import validate_tenant_id
 
         for wildcard in ("*", "%", "", "null"):
-            with patch("proxy.store.audit.get_pool", return_value=mock_pool):
-                await query_audit_logs(tenant_id=wildcard)
-
-            sql = mock_conn.fetchrow.call_args[0][0]
-            # Uses exact equality (=), not LIKE — wildcards are literal
-            assert "tenant_id = $1" in sql
-            assert "LIKE" not in sql.split("tenant_id")[0] + sql.split("tenant_id")[1].split("AND")[0]
+            with pytest.raises(ValueError):
+                validate_tenant_id(wildcard)
 
 
 # ===================================================================

@@ -1,4 +1,10 @@
-"""Audit log PostgreSQL storage — fire-and-forget insert, parameterized queries."""
+"""Audit log PostgreSQL storage — fire-and-forget insert, parameterized queries.
+
+All tenant-scoped operations use ``tenant_transaction`` so that PostgreSQL
+Row-Level Security (RLS) policies enforce tenant isolation at the database
+level, in addition to the existing application-level ``WHERE tenant_id = $1``
+filters.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ from typing import Any
 import structlog
 
 from proxy.store.postgres import get_pool
+from proxy.store.rls import tenant_transaction, validate_tenant_id
 
 logger = structlog.get_logger()
 
@@ -43,14 +50,18 @@ async def insert_audit_log(
         logger.warning("audit_insert_skipped", reason="no db pool", tenant_id=tenant_id)
         return
     try:
-        async with pool.acquire() as conn:
+        # Use normalised tenant_id for both RLS context and INSERT value.
+        # Prevents case mismatch where GUC is lowercase but INSERT uses
+        # the original casing, which would be rejected by WITH CHECK.
+        normalised = validate_tenant_id(tenant_id)
+        async with tenant_transaction(normalised) as conn:
             await conn.execute(
                 """INSERT INTO audit_logs
                    (tenant_id, app_id, request_id, timestamp, method, path,
                     status_code, duration_ms, client_ip, user_agent, country,
                     user_id, action, blocked)
                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
-                tenant_id, app_id, request_id, timestamp, method, path,
+                normalised, app_id, request_id, timestamp, method, path,
                 status_code, duration_ms, client_ip, user_agent, country,
                 user_id, action, blocked,
             )
@@ -76,6 +87,7 @@ async def query_audit_logs(
     """Query audit logs with filters. Returns (rows, total_count).
 
     All filters use parameterized SQL. Limit is clamped to 1000.
+    RLS ensures only rows for *tenant_id* are visible.
     """
     pool = get_pool()
     if pool is None:
@@ -137,7 +149,7 @@ async def query_audit_logs(
 
     where = " AND ".join(conditions)
 
-    async with pool.acquire() as conn:
+    async with tenant_transaction(tenant_id) as conn:
         count_row = await conn.fetchrow(
             f"SELECT COUNT(*) AS total FROM audit_logs WHERE {where}",
             *values,
@@ -166,7 +178,7 @@ async def delete_old_audit_logs(tenant_id: str, retention_days: int) -> int:
     if pool is None:
         return 0
     try:
-        async with pool.acquire() as conn:
+        async with tenant_transaction(tenant_id) as conn:
             result = await conn.execute(
                 "DELETE FROM audit_logs WHERE tenant_id = $1 AND timestamp < now() - make_interval(days => $2)",
                 tenant_id, retention_days,

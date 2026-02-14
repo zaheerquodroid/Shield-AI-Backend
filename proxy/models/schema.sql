@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS customers (
 
 CREATE TABLE IF NOT EXISTS apps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     origin_url VARCHAR(512) NOT NULL,
     domain VARCHAR(255) UNIQUE NOT NULL,
@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     blocked BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+-- Prevent empty tenant_id — ensures RLS cannot match unset GUC (empty string)
+DO $$ BEGIN
+    ALTER TABLE audit_logs ADD CONSTRAINT chk_tenant_id_nonempty CHECK (tenant_id != '');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;  -- constraint already exists
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_ts ON audit_logs (tenant_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_path ON audit_logs (tenant_id, path);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_status ON audit_logs (tenant_id, status_code);
@@ -59,7 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs (timestamp DESC);
 -- Sprint 5: Webhook configurations for real-time event streaming
 CREATE TABLE IF NOT EXISTS webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     url VARCHAR(2048) NOT NULL,
     provider VARCHAR(32) NOT NULL DEFAULT 'custom',
@@ -72,3 +79,75 @@ CREATE TABLE IF NOT EXISTS webhooks (
 
 CREATE INDEX IF NOT EXISTS idx_webhooks_customer_id ON webhooks(customer_id);
 CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled) WHERE enabled = TRUE;
+
+-- Sprint 6: Row-Level Security for tenant isolation (SHIELD-25)
+-- Create restricted application role (NOLOGIN — only via SET ROLE)
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'shieldai_app') THEN
+        CREATE ROLE shieldai_app NOLOGIN;
+    END IF;
+END $$;
+
+-- Grant app role to current user (enables SET ROLE)
+GRANT shieldai_app TO CURRENT_USER;
+
+-- Grant table permissions to app role (DML only — no DDL, no TRUNCATE)
+GRANT SELECT, INSERT, UPDATE, DELETE ON customers TO shieldai_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON apps TO shieldai_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON audit_logs TO shieldai_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON webhooks TO shieldai_app;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO shieldai_app;
+
+-- Explicitly revoke dangerous privileges from app role
+REVOKE TRUNCATE ON customers, apps, audit_logs, webhooks FROM shieldai_app;
+REVOKE REFERENCES ON customers, apps, audit_logs, webhooks FROM shieldai_app;
+REVOKE TRIGGER ON customers, apps, audit_logs, webhooks FROM shieldai_app;
+
+-- GUC protection: prevent app role from directly manipulating tenant context.
+-- On PostgreSQL 15+ this prevents SET or set_config() by the app role.
+-- The owner role (which executes tenant_transaction) sets the GUC BEFORE
+-- switching to shieldai_app via SET LOCAL ROLE, so this is safe.
+DO $$ BEGIN
+    -- pg_catalog.has_parameter_privilege requires PG15+; guard against older versions.
+    IF current_setting('server_version_num')::int >= 150000 THEN
+        EXECUTE 'REVOKE SET ON PARAMETER "app.current_tenant_id" FROM shieldai_app';
+    END IF;
+EXCEPTION
+    WHEN undefined_object OR insufficient_privilege THEN
+        -- GUC not yet registered or PG < 15 — skip silently.
+        NULL;
+END $$;
+
+-- Enable RLS on all tenant-scoped tables
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE apps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhooks ENABLE ROW LEVEL SECURITY;
+
+-- RLS policies: DROP IF EXISTS + CREATE for idempotency
+-- customers: id IS the tenant
+DROP POLICY IF EXISTS tenant_isolation ON customers;
+CREATE POLICY tenant_isolation ON customers
+    USING (id = current_setting('app.current_tenant_id', true)::uuid)
+    WITH CHECK (id = current_setting('app.current_tenant_id', true)::uuid);
+
+-- apps: customer_id = tenant
+DROP POLICY IF EXISTS tenant_isolation ON apps;
+CREATE POLICY tenant_isolation ON apps
+    USING (customer_id = current_setting('app.current_tenant_id', true)::uuid)
+    WITH CHECK (customer_id = current_setting('app.current_tenant_id', true)::uuid);
+
+-- audit_logs: tenant_id is VARCHAR (no UUID cast)
+-- Extra guard: reject empty GUC to prevent matching rows with tenant_id = ''
+DROP POLICY IF EXISTS tenant_isolation ON audit_logs;
+CREATE POLICY tenant_isolation ON audit_logs
+    USING (tenant_id = current_setting('app.current_tenant_id', true)
+        AND current_setting('app.current_tenant_id', true) != '')
+    WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)
+        AND current_setting('app.current_tenant_id', true) != '');
+
+-- webhooks: customer_id = tenant
+DROP POLICY IF EXISTS tenant_isolation ON webhooks;
+CREATE POLICY tenant_isolation ON webhooks
+    USING (customer_id = current_setting('app.current_tenant_id', true)::uuid)
+    WITH CHECK (customer_id = current_setting('app.current_tenant_id', true)::uuid);

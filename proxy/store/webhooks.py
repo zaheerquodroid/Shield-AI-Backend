@@ -1,4 +1,10 @@
-"""Webhook PostgreSQL storage — CRUD for webhook configurations."""
+"""Webhook PostgreSQL storage — CRUD for webhook configurations.
+
+Tenant-scoped operations use ``tenant_transaction`` so that PostgreSQL
+Row-Level Security (RLS) policies enforce tenant isolation at the database
+level.  When ``customer_id`` is ``None`` (admin access), the pool is used
+directly — the owner role bypasses RLS.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ from uuid import UUID
 import structlog
 
 from proxy.store.postgres import get_pool, StoreUnavailable
+from proxy.store.rls import tenant_transaction
 
 logger = structlog.get_logger()
 
@@ -28,7 +35,7 @@ async def create_webhook(
     pool = get_pool()
     if pool is None:
         raise StoreUnavailable("Database connection pool not initialized")
-    async with pool.acquire() as conn:
+    async with tenant_transaction(str(customer_id)) as conn:
         row = await conn.fetchrow(
             """INSERT INTO webhooks (customer_id, name, url, provider, events, secret, enabled)
                VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -41,24 +48,25 @@ async def create_webhook(
 async def get_webhook(webhook_id: UUID, *, customer_id: UUID | None = None) -> dict[str, Any] | None:
     """Fetch a webhook by ID (without secret).
 
-    When customer_id is provided, enforces ownership — returns None if the
-    webhook belongs to a different customer (prevents IDOR).
+    When customer_id is provided, enforces ownership via RLS — returns None if
+    the webhook belongs to a different customer (prevents IDOR).
     """
     pool = get_pool()
     if pool is None:
         raise StoreUnavailable("Database connection pool not initialized")
-    async with pool.acquire() as conn:
-        if customer_id is not None:
+    if customer_id is not None:
+        async with tenant_transaction(str(customer_id)) as conn:
             row = await conn.fetchrow(
                 "SELECT id, customer_id, name, url, provider, events, enabled, created_at, updated_at FROM webhooks WHERE id = $1 AND customer_id = $2",
                 webhook_id, customer_id,
             )
-        else:
+    else:
+        async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT id, customer_id, name, url, provider, events, enabled, created_at, updated_at FROM webhooks WHERE id = $1",
                 webhook_id,
             )
-        return dict(row) if row else None
+    return dict(row) if row else None
 
 
 async def list_webhooks(customer_id: UUID) -> list[dict[str, Any]]:
@@ -66,7 +74,7 @@ async def list_webhooks(customer_id: UUID) -> list[dict[str, Any]]:
     pool = get_pool()
     if pool is None:
         raise StoreUnavailable("Database connection pool not initialized")
-    async with pool.acquire() as conn:
+    async with tenant_transaction(str(customer_id)) as conn:
         rows = await conn.fetch(
             "SELECT id, customer_id, name, url, provider, events, enabled, created_at, updated_at FROM webhooks WHERE customer_id = $1 ORDER BY created_at",
             customer_id,
@@ -77,8 +85,8 @@ async def list_webhooks(customer_id: UUID) -> list[dict[str, Any]]:
 async def update_webhook(webhook_id: UUID, *, customer_id: UUID | None = None, **fields) -> dict[str, Any] | None:
     """Update a webhook. Only non-None, whitelisted fields are updated.
 
-    When customer_id is provided, enforces ownership — returns None if the
-    webhook belongs to a different customer (prevents IDOR).
+    When customer_id is provided, enforces ownership via RLS — returns None if
+    the webhook belongs to a different customer (prevents IDOR).
     """
     pool = get_pool()
     if pool is None:
@@ -105,29 +113,35 @@ async def update_webhook(webhook_id: UUID, *, customer_id: UUID | None = None, *
         where = f"WHERE id = ${idx}"
 
     sql = f"UPDATE webhooks SET {', '.join(set_clauses)} {where} RETURNING id, customer_id, name, url, provider, events, enabled, created_at, updated_at"
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(sql, *values)
-        return dict(row) if row else None
+
+    if customer_id is not None:
+        async with tenant_transaction(str(customer_id)) as conn:
+            row = await conn.fetchrow(sql, *values)
+    else:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(sql, *values)
+    return dict(row) if row else None
 
 
 async def delete_webhook(webhook_id: UUID, *, customer_id: UUID | None = None) -> bool:
     """Delete a webhook by ID.
 
-    When customer_id is provided, enforces ownership — returns False if the
-    webhook belongs to a different customer (prevents IDOR).
+    When customer_id is provided, enforces ownership via RLS — returns False if
+    the webhook belongs to a different customer (prevents IDOR).
     """
     pool = get_pool()
     if pool is None:
         raise StoreUnavailable("Database connection pool not initialized")
-    async with pool.acquire() as conn:
-        if customer_id is not None:
+    if customer_id is not None:
+        async with tenant_transaction(str(customer_id)) as conn:
             result = await conn.execute(
                 "DELETE FROM webhooks WHERE id = $1 AND customer_id = $2",
                 webhook_id, customer_id,
             )
-        else:
+    else:
+        async with pool.acquire() as conn:
             result = await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
-        return result == "DELETE 1"
+    return result == "DELETE 1"
 
 
 async def get_enabled_webhooks_for_event(
@@ -146,7 +160,7 @@ async def get_enabled_webhooks_for_event(
     except (ValueError, AttributeError):
         logger.warning("webhook_invalid_customer_id", customer_id=customer_id)
         return []
-    async with pool.acquire() as conn:
+    async with tenant_transaction(str(cid)) as conn:
         rows = await conn.fetch(
             """SELECT id, url, provider, secret, events
                FROM webhooks

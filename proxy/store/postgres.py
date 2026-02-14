@@ -241,3 +241,11 @@ async def close_postgres() -> None:
         await _pool.close()
         _pool = None
         logger.info("postgres_closed")
+
+
+# Re-export RLS helpers for convenience
+from proxy.store.rls import (  # noqa: E402, F401
+    RLS_APP_ROLE,
+    tenant_transaction,
+    validate_tenant_id,
+)

@@ -86,6 +86,9 @@ class ProxySettings(BaseSettings):
     secrets_provider: str = "env"
     secrets_cache_ttl: int = 300
 
+    # Row-Level Security
+    rls_enabled: bool = True
+
 _settings: ProxySettings | None = None
 
 
