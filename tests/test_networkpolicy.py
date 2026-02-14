@@ -43,14 +43,16 @@ class TestHelmRendering:
         policies = find_policies(docs)
         assert len(policies) == 5
 
-    def test_all_resources_are_networkpolicy(self):
+    def test_all_networkpolicies_have_correct_kind(self):
         docs = render_default()
-        for doc in docs:
+        policies = find_policies(docs)
+        for doc in policies:
             assert doc["kind"] == "NetworkPolicy"
 
     def test_api_version(self):
         docs = render_default()
-        for doc in docs:
+        policies = find_policies(docs)
+        for doc in policies:
             assert doc["apiVersion"] == "networking.k8s.io/v1"
 
     def test_default_namespace(self):
@@ -454,7 +456,8 @@ class TestPolicyTypesExplicit:
 
     def test_all_policies_have_policy_types(self):
         docs = render_default()
-        for doc in docs:
+        policies = find_policies(docs)
+        for doc in policies:
             types = get_policy_types(doc)
             assert len(types) > 0, (
                 f"Policy {doc['metadata']['name']} has no policyTypes"
@@ -480,9 +483,10 @@ class TestPolicyTypesExplicit:
             )
 
     def test_no_mixed_types(self):
-        """No policy should have both Ingress and Egress — separation of concerns."""
+        """No NetworkPolicy should have both Ingress and Egress — separation of concerns."""
         docs = render_default()
-        for doc in docs:
+        policies = find_policies(docs)
+        for doc in policies:
             types = get_policy_types(doc)
             assert len(types) == 1, (
                 f"Policy {doc['metadata']['name']} has mixed policyTypes: {types}"

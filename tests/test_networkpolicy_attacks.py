@@ -321,9 +321,10 @@ class TestPolicyBypassPatterns:
             )
 
     def test_missing_policy_types_not_possible(self):
-        """Every policy has explicit policyTypes."""
+        """Every NetworkPolicy has explicit policyTypes."""
         docs = render_default()
-        for doc in docs:
+        policies = find_policies(docs)
+        for doc in policies:
             types = get_policy_types(doc)
             assert len(types) > 0
 
@@ -357,7 +358,7 @@ class TestEdgeCases:
     """Edge cases and unusual configurations."""
 
     def test_all_policies_disabled(self):
-        """Disabling all policies produces no resources."""
+        """Disabling all NetworkPolicy policies produces no NetworkPolicy resources."""
         values = {
             "policies": {
                 "defaultDenyIngress": False,
@@ -368,7 +369,8 @@ class TestEdgeCases:
             }
         }
         docs = render_chart(values)
-        assert len(docs) == 0
+        policies = find_policies(docs)
+        assert len(policies) == 0
 
     def test_only_deny_policies(self):
         """Only deny policies can be enabled."""
@@ -382,8 +384,9 @@ class TestEdgeCases:
             }
         }
         docs = render_chart(values)
-        assert len(docs) == 2
-        names = [d["metadata"]["name"] for d in docs]
+        policies = find_policies(docs)
+        assert len(policies) == 2
+        names = [d["metadata"]["name"] for d in policies]
         assert any("deny-ingress" in n for n in names)
         assert any("deny-egress" in n for n in names)
 
@@ -733,7 +736,8 @@ class TestHardeningRound2:
         """
         # Render with valid values — should succeed
         docs = render_default()
-        for doc in docs:
+        policies = find_policies(docs)
+        for doc in policies:
             selector = get_pod_selector(doc)
             # Must have matchLabels key (not null)
             assert "matchLabels" in selector

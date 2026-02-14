@@ -1,0 +1,46 @@
+{{- if .Values.namespaceManagement.create }}
+{{- /* Validate PSS levels */ -}}
+{{- $validLevels := list "restricted" "baseline" "privileged" }}
+{{- if not (has .Values.podSecurity.enforce $validLevels) }}
+{{- fail (printf "Invalid podSecurity.enforce level '%s'. Must be one of: restricted, baseline, privileged" .Values.podSecurity.enforce) }}
+{{- end }}
+{{- if not (has .Values.podSecurity.audit $validLevels) }}
+{{- fail (printf "Invalid podSecurity.audit level '%s'. Must be one of: restricted, baseline, privileged" .Values.podSecurity.audit) }}
+{{- end }}
+{{- if not (has .Values.podSecurity.warn $validLevels) }}
+{{- fail (printf "Invalid podSecurity.warn level '%s'. Must be one of: restricted, baseline, privileged" .Values.podSecurity.warn) }}
+{{- end }}
+{{- /* Fail guard: prevent PSS downgrade to privileged */ -}}
+{{- if eq .Values.podSecurity.enforce "privileged" }}
+{{- fail "podSecurity.enforce cannot be 'privileged' — this disables all pod security enforcement" }}
+{{- end }}
+{{- /* Fail guard: audit level must not be weaker than enforce */ -}}
+{{- $levelOrder := dict "restricted" 0 "baseline" 1 "privileged" 2 }}
+{{- $enforceOrder := index $levelOrder .Values.podSecurity.enforce }}
+{{- $auditOrder := index $levelOrder .Values.podSecurity.audit }}
+{{- $warnOrder := index $levelOrder .Values.podSecurity.warn }}
+{{- if gt (int $auditOrder) (int $enforceOrder) }}
+{{- fail (printf "podSecurity.audit '%s' is weaker than enforce '%s' — audit must be >= enforce level" .Values.podSecurity.audit .Values.podSecurity.enforce) }}
+{{- end }}
+{{- if gt (int $warnOrder) (int $enforceOrder) }}
+{{- fail (printf "podSecurity.warn '%s' is weaker than enforce '%s' — warn must be >= enforce level" .Values.podSecurity.warn .Values.podSecurity.enforce) }}
+{{- end }}
+{{- /* Fail guard: version must not be empty */ -}}
+{{- if not .Values.podSecurity.version }}
+{{- fail "podSecurity.version cannot be empty. Use 'latest' or a specific version like 'v1.28'" }}
+{{- end }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "shieldai.namespace" . }}
+  labels:
+    {{- include "shieldai.labels" . | nindent 4 }}
+    {{- if .Values.podSecurity.enabled }}
+    pod-security.kubernetes.io/enforce: {{ .Values.podSecurity.enforce | quote }}
+    pod-security.kubernetes.io/enforce-version: {{ .Values.podSecurity.version | quote }}
+    pod-security.kubernetes.io/audit: {{ .Values.podSecurity.audit | quote }}
+    pod-security.kubernetes.io/audit-version: {{ .Values.podSecurity.version | quote }}
+    pod-security.kubernetes.io/warn: {{ .Values.podSecurity.warn | quote }}
+    pod-security.kubernetes.io/warn-version: {{ .Values.podSecurity.version | quote }}
+    {{- end }}
+{{- end }}

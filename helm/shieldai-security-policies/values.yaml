@@ -57,3 +57,39 @@ policies:
   allowDnsEgress: true
   allowHttpsEgress: true
   allowCallbackEgress: true
+
+# Namespace management (separate from 'namespace' string above)
+namespaceManagement:
+  create: false   # Set true to create namespace with PSS labels
+
+# Pod Security Standards — PodSecurity admission labels
+podSecurity:
+  enabled: true
+  # PSS levels: restricted, baseline, privileged
+  enforce: restricted
+  audit: restricted
+  warn: restricted
+  # Kubernetes version for PSS (latest = current cluster version)
+  version: latest
+
+# Reference security context for customer workloads
+securityContext:
+  # Pod-level security context
+  pod:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  # Container-level security context
+  container:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  # Writable /tmp via emptyDir
+  tmpVolume:
+    enabled: true
+    sizeLimit: "100Mi"

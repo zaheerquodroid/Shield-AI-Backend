@@ -1,0 +1,104 @@
+{{- if .Values.podSecurity.enabled }}
+{{- /* ---- PSS level validation (fires even without namespaceManagement.create) ---- */ -}}
+{{- $validLevels := list "restricted" "baseline" "privileged" }}
+{{- if not (has .Values.podSecurity.enforce $validLevels) }}
+{{- fail (printf "Invalid podSecurity.enforce level '%s'. Must be one of: restricted, baseline, privileged" .Values.podSecurity.enforce) }}
+{{- end }}
+{{- if not (has .Values.podSecurity.audit $validLevels) }}
+{{- fail (printf "Invalid podSecurity.audit level '%s'. Must be one of: restricted, baseline, privileged" .Values.podSecurity.audit) }}
+{{- end }}
+{{- if not (has .Values.podSecurity.warn $validLevels) }}
+{{- fail (printf "Invalid podSecurity.warn level '%s'. Must be one of: restricted, baseline, privileged" .Values.podSecurity.warn) }}
+{{- end }}
+{{- if eq .Values.podSecurity.enforce "privileged" }}
+{{- fail "podSecurity.enforce cannot be 'privileged' — this disables all pod security enforcement" }}
+{{- end }}
+{{- $levelOrder := dict "restricted" 0 "baseline" 1 "privileged" 2 }}
+{{- $enforceOrder := index $levelOrder .Values.podSecurity.enforce }}
+{{- $auditOrder := index $levelOrder .Values.podSecurity.audit }}
+{{- $warnOrder := index $levelOrder .Values.podSecurity.warn }}
+{{- if gt (int $auditOrder) (int $enforceOrder) }}
+{{- fail (printf "podSecurity.audit '%s' is weaker than enforce '%s' — audit must be >= enforce level" .Values.podSecurity.audit .Values.podSecurity.enforce) }}
+{{- end }}
+{{- if gt (int $warnOrder) (int $enforceOrder) }}
+{{- fail (printf "podSecurity.warn '%s' is weaker than enforce '%s' — warn must be >= enforce level" .Values.podSecurity.warn .Values.podSecurity.enforce) }}
+{{- end }}
+{{- /* Fail guard: version must not be empty */ -}}
+{{- if not .Values.podSecurity.version }}
+{{- fail "podSecurity.version cannot be empty. Use 'latest' or a specific version like 'v1.28'" }}
+{{- end }}
+{{- /* ---- Security context fail guards ---- */ -}}
+{{- /* Fail guard: runAsNonRoot must be true when podSecurity is enabled */ -}}
+{{- if not .Values.securityContext.pod.runAsNonRoot }}
+{{- fail "securityContext.pod.runAsNonRoot must be true when podSecurity is enabled" }}
+{{- end }}
+{{- /* Fail guard: runAsUser must be > 0 (not root, not negative) */ -}}
+{{- if le (int .Values.securityContext.pod.runAsUser) 0 }}
+{{- fail (printf "securityContext.pod.runAsUser must be > 0, got %d. UID 0 is root; negative UIDs are invalid" (int .Values.securityContext.pod.runAsUser)) }}
+{{- end }}
+{{- /* Fail guard: runAsGroup must be > 0 (GID 0 = root group) */ -}}
+{{- if le (int .Values.securityContext.pod.runAsGroup) 0 }}
+{{- fail (printf "securityContext.pod.runAsGroup must be > 0, got %d. GID 0 is the root group" (int .Values.securityContext.pod.runAsGroup)) }}
+{{- end }}
+{{- /* Fail guard: fsGroup must be > 0 (GID 0 = root group for volumes) */ -}}
+{{- if le (int .Values.securityContext.pod.fsGroup) 0 }}
+{{- fail (printf "securityContext.pod.fsGroup must be > 0, got %d. GID 0 grants root group access to volumes" (int .Values.securityContext.pod.fsGroup)) }}
+{{- end }}
+{{- /* Fail guard: allowPrivilegeEscalation must be false */ -}}
+{{- if .Values.securityContext.container.allowPrivilegeEscalation }}
+{{- fail "securityContext.container.allowPrivilegeEscalation must be false when podSecurity is enabled" }}
+{{- end }}
+{{- /* Fail guard: capabilities.drop must contain ALL */ -}}
+{{- if not (has "ALL" .Values.securityContext.container.capabilities.drop) }}
+{{- fail "securityContext.container.capabilities.drop must contain 'ALL' when podSecurity is enabled" }}
+{{- end }}
+{{- /* Fail guard: seccompProfile must be RuntimeDefault or Localhost (PSS restricted requires it) */ -}}
+{{- $validSeccomp := list "RuntimeDefault" "Localhost" }}
+{{- if not (has .Values.securityContext.pod.seccompProfile.type $validSeccomp) }}
+{{- fail (printf "securityContext.pod.seccompProfile.type '%s' is not allowed when podSecurity is enabled. Must be RuntimeDefault or Localhost" .Values.securityContext.pod.seccompProfile.type) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shieldai.fullname" . }}-security-context
+  namespace: {{ include "shieldai.namespace" . }}
+  labels:
+    {{- include "shieldai.labels" . | nindent 4 }}
+    shieldai.io/policy: pod-security-context
+data:
+  security-context.yaml: |
+    # Reference security context for ShieldAI customer workloads.
+    # Apply these settings to all workload pod specs.
+    # NOTE: readOnlyRootFilesystem is NOT enforced by PSS restricted profile.
+    # This ConfigMap provides the recommended setting; enforce via policy engine
+    # (OPA Gatekeeper, Kyverno) if admission-level enforcement is required.
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.pod.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.pod.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.pod.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.pod.fsGroup }}
+        seccompProfile:
+          type: {{ .Values.securityContext.pod.seccompProfile.type }}
+      containers:
+        - securityContext:
+            allowPrivilegeEscalation: {{ .Values.securityContext.container.allowPrivilegeEscalation }}
+            readOnlyRootFilesystem: {{ .Values.securityContext.container.readOnlyRootFilesystem }}
+            capabilities:
+              drop:
+                {{- range .Values.securityContext.container.capabilities.drop }}
+                - {{ . | quote }}
+                {{- end }}
+          {{- if .Values.securityContext.tmpVolume.enabled }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- end }}
+      {{- if .Values.securityContext.tmpVolume.enabled }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.securityContext.tmpVolume.sizeLimit | quote }}
+      {{- end }}
+{{- end }}

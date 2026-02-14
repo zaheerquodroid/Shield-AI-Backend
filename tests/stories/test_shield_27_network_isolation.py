@@ -19,6 +19,7 @@ import yaml
 from tests.helpers.helm import (
     CHART_DIR,
     default_callback_values,
+    find_policies,
     find_policy,
     get_egress_ports,
     get_egress_rules,
@@ -63,8 +64,9 @@ class TestAC1_HelmChartStructure:
 
     def test_renders_networkpolicy_resources(self):
         docs = render_default()
-        assert len(docs) == 5
-        for doc in docs:
+        policies = find_policies(docs)
+        assert len(policies) == 5
+        for doc in policies:
             assert doc["kind"] == "NetworkPolicy"
             assert doc["apiVersion"] == "networking.k8s.io/v1"
 
@@ -179,7 +181,8 @@ class TestAC5_PerNamespace:
         values = default_callback_values()
         values["namespace"] = "tenant-beta"
         docs = render_chart(values)
-        assert len(docs) == 5
+        policies = find_policies(docs)
+        assert len(policies) == 5
         for doc in docs:
             assert doc["metadata"]["namespace"] == "tenant-beta"
 

@@ -70,8 +70,62 @@ SECURITY WARNINGS — INHERENT KUBERNETES LIMITATIONS:
       deleted before pods during namespace termination, creating a brief
       enforcement gap. Consider the network-policy-finalizer controller.
 
+{{- if .Values.podSecurity.enabled }}
+
+POD SECURITY STANDARDS (PSS):
+
+  The following pod security controls are configured:
+
+  ConfigMap: {{ include "shieldai.fullname" . }}-security-context
+    - runAsNonRoot: {{ .Values.securityContext.pod.runAsNonRoot }}
+    - runAsUser: {{ .Values.securityContext.pod.runAsUser }} (nobody)
+    - runAsGroup: {{ .Values.securityContext.pod.runAsGroup }}
+    - fsGroup: {{ .Values.securityContext.pod.fsGroup }}
+    - seccompProfile: {{ .Values.securityContext.pod.seccompProfile.type }}
+    - allowPrivilegeEscalation: {{ .Values.securityContext.container.allowPrivilegeEscalation }}
+    - readOnlyRootFilesystem: {{ .Values.securityContext.container.readOnlyRootFilesystem }}
+    - capabilities.drop: {{ join ", " .Values.securityContext.container.capabilities.drop }}
+  {{- if .Values.securityContext.tmpVolume.enabled }}
+    - /tmp: emptyDir (sizeLimit: {{ .Values.securityContext.tmpVolume.sizeLimit }})
+  {{- end }}
+
+  {{- if .Values.namespaceManagement.create }}
+
+  Namespace PSS admission labels applied:
+    - enforce: {{ .Values.podSecurity.enforce }} (version: {{ .Values.podSecurity.version }})
+    - audit: {{ .Values.podSecurity.audit }} (version: {{ .Values.podSecurity.version }})
+    - warn: {{ .Values.podSecurity.warn }} (version: {{ .Values.podSecurity.version }})
+
+  Pods violating the '{{ .Values.podSecurity.enforce }}' profile will be REJECTED at admission.
+  {{- else }}
+
+  NOTE: Namespace management is disabled (namespaceManagement.create=false).
+  You must manually apply PSS labels to your namespace:
+
+    kubectl label namespace {{ include "shieldai.namespace" . }} \
+      pod-security.kubernetes.io/enforce={{ .Values.podSecurity.enforce }} \
+      pod-security.kubernetes.io/enforce-version={{ .Values.podSecurity.version }} \
+      pod-security.kubernetes.io/audit={{ .Values.podSecurity.audit }} \
+      pod-security.kubernetes.io/audit-version={{ .Values.podSecurity.version }} \
+      pod-security.kubernetes.io/warn={{ .Values.podSecurity.warn }} \
+      pod-security.kubernetes.io/warn-version={{ .Values.podSecurity.version }}
+  {{- end }}
+
+  IMPORTANT: readOnlyRootFilesystem is NOT enforced by the PSS restricted
+  profile. The ConfigMap provides the recommended setting. For admission-level
+  enforcement of readOnlyRootFilesystem, use a policy engine such as OPA
+  Gatekeeper or Kyverno.
+{{- end }}
+
 To verify policies:
   kubectl get networkpolicies -n {{ include "shieldai.namespace" . }}
+{{- if .Values.namespaceManagement.create }}
+  kubectl get ns {{ include "shieldai.namespace" . }} --show-labels
+  kubectl describe ns {{ include "shieldai.namespace" . }}
+{{- end }}
+{{- if .Values.podSecurity.enabled }}
+  kubectl get configmap {{ include "shieldai.fullname" . }}-security-context -n {{ include "shieldai.namespace" . }} -o yaml
+{{- end }}
 
 To test enforcement:
   kubectl run test --rm -it --image=busybox -n {{ include "shieldai.namespace" . }} -- wget -qO- --timeout=3 http://169.254.169.254/

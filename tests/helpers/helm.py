@@ -1,4 +1,4 @@
-"""Helm chart test helpers for rendering and inspecting NetworkPolicy resources."""
+"""Helm chart test helpers for rendering and inspecting Kubernetes resources."""
 
 from __future__ import annotations
 
@@ -191,3 +191,74 @@ def default_callback_values() -> dict[str, Any]:
 def render_default() -> list[dict[str, Any]]:
     """Render chart with default values + required callback CIDR."""
     return render_chart(default_callback_values())
+
+
+def find_resource(
+    docs: list[dict[str, Any]], kind: str, name_contains: str = ""
+) -> dict[str, Any]:
+    """Find a Kubernetes resource by kind and optional name substring.
+
+    Args:
+        docs: List of parsed K8s resource dicts.
+        kind: Resource kind (e.g. "Namespace", "ConfigMap").
+        name_contains: Optional substring to match in metadata.name.
+
+    Returns:
+        The matching resource dict.
+
+    Raises:
+        ValueError: If no matching resource is found.
+    """
+    for doc in docs:
+        if doc.get("kind") != kind:
+            continue
+        if name_contains and name_contains not in doc.get("metadata", {}).get("name", ""):
+            continue
+        return doc
+    available = [
+        f"{d.get('kind')}:{d.get('metadata', {}).get('name', '?')}" for d in docs
+    ]
+    raise ValueError(
+        f"No {kind} containing '{name_contains}' found. Available: {available}"
+    )
+
+
+def get_configmap_data(configmap: dict[str, Any]) -> dict[str, str]:
+    """Extract .data from a ConfigMap resource."""
+    return configmap.get("data", {})
+
+
+def get_namespace_labels(namespace: dict[str, Any]) -> dict[str, str]:
+    """Extract labels from a Namespace resource."""
+    return namespace.get("metadata", {}).get("labels", {})
+
+
+def default_pss_values() -> dict[str, Any]:
+    """Return values with namespace creation + callback CIDR for PSS tests."""
+    return {
+        "callback": {"cidr": "203.0.113.10/32"},
+        "namespaceManagement": {"create": True},
+    }
+
+
+def render_with_namespace(
+    values_override: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Render chart with namespace creation enabled.
+
+    Merges the given values_override on top of default_pss_values().
+    """
+    values = default_pss_values()
+    if values_override:
+        _deep_merge(values, values_override)
+    return render_chart(values)
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base (mutates base)."""
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
