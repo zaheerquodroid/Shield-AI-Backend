@@ -1,0 +1,59 @@
+{{- if .Values.policies.allowHttpsEgress }}
+{{- /* Fail-closed: Require minimum blocked CIDRs to prevent silent fail-open */ -}}
+{{- $allBlocked := list }}
+{{- range .Values.blockedCIDRs.rfc1918 }}{{ $allBlocked = append $allBlocked . }}{{ end }}
+{{- range .Values.blockedCIDRs.metadata }}{{ if not (contains ":" .) }}{{ $allBlocked = append $allBlocked . }}{{ end }}{{ end }}
+{{- range .Values.blockedCIDRs.extra }}{{ if not (contains ":" .) }}{{ $allBlocked = append $allBlocked . }}{{ end }}{{ end }}
+{{- if lt (len $allBlocked) 4 }}
+{{- fail (printf "blockedCIDRs must contain at least 4 IPv4 CIDRs (RFC 1918 + metadata). Found only %d. This would silently fail-open and allow access to internal cluster IPs and cloud metadata endpoints." (len $allBlocked)) }}
+{{- end }}
+{{- if gt (len $allBlocked) 50 }}
+{{- fail (printf "blockedCIDRs has %d IPv4 entries. Exceeding 50 entries may cause CNI performance issues (Cilium BPF map exhaustion, iptables overhead). Consolidate into larger CIDR blocks." (len $allBlocked)) }}
+{{- end }}
+{{- if not (has "10.0.0.0/8" $allBlocked) }}
+{{- fail "blockedCIDRs is missing 10.0.0.0/8 (RFC 1918). This would allow egress to most Kubernetes pod and service CIDRs." }}
+{{- end }}
+{{- if not (has "172.16.0.0/12" $allBlocked) }}
+{{- fail "blockedCIDRs is missing 172.16.0.0/12 (RFC 1918). This would allow egress to Docker bridge and some Kubernetes CIDRs." }}
+{{- end }}
+{{- if not (has "192.168.0.0/16" $allBlocked) }}
+{{- fail "blockedCIDRs is missing 192.168.0.0/16 (RFC 1918). This would allow egress to common private network ranges." }}
+{{- end }}
+{{- if not (has "169.254.0.0/16" $allBlocked) }}
+{{- fail "blockedCIDRs is missing 169.254.0.0/16 (link-local). This would allow access to cloud metadata endpoints (AWS/GCP/Azure IMDS)." }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "shieldai.fullname" . }}-allow-https-egress
+  namespace: {{ include "shieldai.namespace" . }}
+  labels:
+    {{- include "shieldai.labels" . | nindent 4 }}
+    shieldai.io/policy: allow-https-egress
+spec:
+  podSelector:
+    matchLabels: {{ .Values.podSelector | default dict | mustToJson }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range .Values.blockedCIDRs.rfc1918 }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- range .Values.blockedCIDRs.metadata }}
+              {{- if not (contains ":" .) }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+              {{- range .Values.blockedCIDRs.extra }}
+              {{- if not (contains ":" .) }}
+              - {{ . | quote }}
+              {{- end }}
+              {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.https.port }}
+{{- end }}

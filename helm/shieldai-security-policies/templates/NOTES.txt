@@ -1,0 +1,78 @@
+ShieldAI Security Policies deployed to namespace: {{ include "shieldai.namespace" . }}
+
+The following NetworkPolicy resources have been created:
+
+{{- if .Values.policies.defaultDenyIngress }}
+  - default-deny-ingress: Blocks ALL inbound traffic to pods
+{{- end }}
+{{- if .Values.policies.defaultDenyEgress }}
+  - default-deny-egress: Blocks ALL outbound traffic from pods (baseline)
+{{- end }}
+{{- if .Values.policies.allowDnsEgress }}
+  - allow-dns-egress: Permits DNS (UDP+TCP {{ .Values.dns.port }}) to {{ .Values.dns.namespace }}
+{{- end }}
+{{- if .Values.policies.allowHttpsEgress }}
+  - allow-https-egress: Permits HTTPS (TCP {{ .Values.https.port }}) to external IPs only
+    Blocked CIDRs: {{ join ", " .Values.blockedCIDRs.rfc1918 }}
+{{- end }}
+{{- if .Values.policies.allowCallbackEgress }}
+  - allow-callback-egress: Permits callback to {{ .Values.callback.cidr }}:{{ .Values.callback.port }}
+{{- end }}
+
+IMPORTANT: These policies use a default-deny approach. Only explicitly
+allowed traffic will be permitted. Verify your workloads can reach
+required services after deployment.
+
+SECURITY WARNINGS — INHERENT KUBERNETES LIMITATIONS:
+
+  1. CNI ENFORCEMENT REQUIRED: NetworkPolicy enforcement requires a
+     compatible CNI plugin (Calico, Cilium, Weave Net). Flannel alone
+     does NOT enforce NetworkPolicy — policies are silently accepted
+     but never applied. Verify with: deploy a deny-all policy and test
+     cross-pod connectivity.
+
+  2. hostNetwork BYPASS: Pods with hostNetwork: true completely bypass
+     NetworkPolicy. Use PodSecurityStandards (Restricted profile) or
+     admission controllers to prevent hostNetwork in tenant namespaces.
+
+  3. hostPort BYPASS: Pods exposing hostPort may receive traffic via
+     node DNAT that bypasses NetworkPolicy on some CNIs (AWS VPC CNI).
+     Block hostPort via PodSecurityStandards.
+
+  4. ADDITIVE SEMANTICS: NetworkPolicy is ADDITIVE (union). These
+     policies CANNOT override explicit allow policies deployed by other
+     controllers. An additional policy allowing 10.0.0.0/8 will
+     override the except list in allow-https-egress. Audit all
+     NetworkPolicy resources in the namespace.
+
+  5. DNS TUNNELING: DNS egress is scoped to CoreDNS pods in
+     {{ .Values.dns.namespace }}, but CoreDNS forwards queries to
+     upstream DNS. L4 NetworkPolicy cannot inspect DNS query content.
+     For L7 DNS inspection, use Cilium or Calico Enterprise DNS policies.
+
+  6. API SERVER ACCESS: The Kubernetes API server may be reachable via
+     its public endpoint (EKS/GKE) on port 443. Add the API server's
+     public IP CIDR to blockedCIDRs.extra or restrict via RBAC.
+
+  7. DUAL-STACK IPv6: On dual-stack clusters, add IPv6 equivalents to
+     blockedCIDRs to prevent IPv4-mapped IPv6 bypass (::ffff:169.254.169.254).
+     Current policies only cover IPv4 ipBlock rules.
+
+  8. POD STARTUP RACE: Some CNIs (AWS VPC CNI standard mode, k3s)
+     enforce policies asynchronously after pod start. Use strict
+     enforcement mode where available (EKS: NETWORK_POLICY_ENFORCING_MODE=strict).
+
+  9. CILIUM ipBlock BEHAVIOR: Cilium does NOT enforce ipBlock rules on
+     pod IPs — use podSelector/namespaceSelector for pod-to-pod control.
+     The default-deny + except list approach works for external traffic.
+
+  10. NAMESPACE DELETION RACE (CVE-2024-7598): NetworkPolicies may be
+      deleted before pods during namespace termination, creating a brief
+      enforcement gap. Consider the network-policy-finalizer controller.
+
+To verify policies:
+  kubectl get networkpolicies -n {{ include "shieldai.namespace" . }}
+
+To test enforcement:
+  kubectl run test --rm -it --image=busybox -n {{ include "shieldai.namespace" . }} -- wget -qO- --timeout=3 http://169.254.169.254/
+  (Should timeout if policies are enforced)

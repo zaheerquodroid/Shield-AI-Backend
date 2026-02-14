@@ -1,0 +1,25 @@
+{{- if .Values.policies.allowCallbackEgress }}
+{{- if not .Values.callback.cidr }}
+{{- fail "callback.cidr is REQUIRED when callback policy is enabled. Set callback.cidr to the CIDR of your ShieldAI callback API (e.g. 203.0.113.10/32)." }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "shieldai.fullname" . }}-allow-callback-egress
+  namespace: {{ include "shieldai.namespace" . }}
+  labels:
+    {{- include "shieldai.labels" . | nindent 4 }}
+    shieldai.io/policy: allow-callback-egress
+spec:
+  podSelector:
+    matchLabels: {{ .Values.podSelector | default dict | mustToJson }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.callback.cidr }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.callback.port }}
+{{- end }}

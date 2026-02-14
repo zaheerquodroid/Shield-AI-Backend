@@ -1,0 +1,34 @@
+{{- if .Values.policies.allowDnsEgress }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "shieldai.fullname" . }}-allow-dns-egress
+  namespace: {{ include "shieldai.namespace" . }}
+  labels:
+    {{- include "shieldai.labels" . | nindent 4 }}
+    shieldai.io/policy: allow-dns-egress
+spec:
+  podSelector:
+    matchLabels: {{ .Values.podSelector | default dict | mustToJson }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.dns.namespace }}
+          {{- if and .Values.dns.podLabels (kindIs "map" .Values.dns.podLabels) }}
+          podSelector:
+            matchLabels:
+              {{- range $k, $v := .Values.dns.podLabels }}
+              {{- if $v }}
+              {{ $k }}: {{ $v | quote }}
+              {{- end }}
+              {{- end }}
+          {{- end }}
+      ports:
+        - protocol: UDP
+          port: {{ .Values.dns.port }}
+        - protocol: TCP
+          port: {{ .Values.dns.port }}
+{{- end }}

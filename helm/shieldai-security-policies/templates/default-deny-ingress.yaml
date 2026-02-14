@@ -1,0 +1,15 @@
+{{- if .Values.policies.defaultDenyIngress }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "shieldai.fullname" . }}-default-deny-ingress
+  namespace: {{ include "shieldai.namespace" . }}
+  labels:
+    {{- include "shieldai.labels" . | nindent 4 }}
+    shieldai.io/policy: default-deny-ingress
+spec:
+  podSelector:
+    matchLabels: {{ .Values.podSelector | default dict | mustToJson }}
+  policyTypes:
+    - Ingress
+{{- end }}

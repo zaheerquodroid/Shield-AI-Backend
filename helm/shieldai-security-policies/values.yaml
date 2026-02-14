@@ -1,0 +1,59 @@
+# ShieldAI Security Policies — default values
+# Deploy into customer Kubernetes namespaces for tenant network isolation.
+
+# Target namespace (defaults to release namespace if empty)
+namespace: ""
+
+# Pod selector applied to ALL policies. {} = all pods in the namespace.
+podSelector: {}
+
+# DNS egress policy
+dns:
+  enabled: true
+  namespace: kube-system
+  port: 53
+  # Pod labels for CoreDNS pods — scopes DNS egress to only DNS pods,
+  # not all pods in kube-system. Set to {} to allow all pods in the namespace.
+  podLabels:
+    k8s-app: kube-dns
+
+# HTTPS egress policy
+https:
+  enabled: true
+  port: 443
+
+# Callback API egress pinhole
+callback:
+  enabled: true
+  # REQUIRED when enabled — CIDR of the ShieldAI callback API (e.g. 203.0.113.10/32).
+  # Template will fail if enabled and cidr is empty.
+  cidr: ""
+  port: 443
+
+# CIDRs blocked in HTTPS egress except list.
+# WARNING: Removing entries from rfc1918 or metadata will SILENTLY fail-open.
+# The template validates that at least the 4 critical CIDRs are present.
+blockedCIDRs:
+  # RFC 1918 private networks
+  rfc1918:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  # Cloud metadata, link-local, loopback, CGNAT, and benchmarking
+  metadata:
+    - "169.254.0.0/16"
+    - "127.0.0.0/8"
+    - "0.0.0.0/8"
+    - "100.64.0.0/10"
+    - "198.18.0.0/15"
+    - "fd00:ec2::254/128"
+  # Additional CIDRs to block (user-extensible)
+  extra: []
+
+# Per-policy enable/disable flags
+policies:
+  defaultDenyIngress: true
+  defaultDenyEgress: true
+  allowDnsEgress: true
+  allowHttpsEgress: true
+  allowCallbackEgress: true
