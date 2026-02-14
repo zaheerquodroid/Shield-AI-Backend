@@ -28,6 +28,7 @@ _DEFAULT_CONFIG: types.MappingProxyType = types.MappingProxyType({
         "bot_protection": False,
         "ssrf_validator": True,
         "callback_verifier": False,
+        "code_validator": False,
     }),
     "settings": types.MappingProxyType({}),
 })

@@ -284,6 +284,7 @@ class TestBuildPipelineOrder:
             "ResponseSanitizer",
             "SecurityHeaders",
             "SessionUpdater",
+            "CodeValidatorMiddleware",
         ]
 
     def test_rate_limiter_before_session_validator(self):

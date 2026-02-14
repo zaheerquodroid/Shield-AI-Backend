@@ -22,6 +22,7 @@ from proxy.middleware.llm_sanitizer import LLMSanitizer
 from proxy.middleware.pipeline import MiddlewarePipeline, RequestContext
 from proxy.middleware.rate_limiter import RateLimiter
 from proxy.middleware.callback_verifier import CallbackVerifier
+from proxy.middleware.code_validator import CodeValidatorMiddleware
 from proxy.middleware.ssrf_validator import SSRFValidator
 from proxy.middleware.response_sanitizer import ResponseSanitizer
 from proxy.middleware.router import TenantRouter
@@ -57,7 +58,8 @@ def _build_pipeline() -> MiddlewarePipeline:
     pipeline.add(LLMSanitizer())       # 7
     pipeline.add(ResponseSanitizer())  # 8
     pipeline.add(SecurityHeaders())    # 9
-    pipeline.add(SessionUpdater())     # 10
+    pipeline.add(SessionUpdater())          # 10
+    pipeline.add(CodeValidatorMiddleware())  # 11: AI-generated code validation
     return pipeline
 
 
@@ -164,10 +166,12 @@ app.include_router(health_router)
 from proxy.api.config_routes import router as config_router  # noqa: E402
 from proxy.api.audit_routes import router as audit_router  # noqa: E402
 from proxy.api.webhook_routes import router as webhook_router  # noqa: E402
+from proxy.api.code_validation_routes import router as code_validation_router  # noqa: E402
 
 app.include_router(config_router)
 app.include_router(audit_router)
 app.include_router(webhook_router)
+app.include_router(code_validation_router)
 
 
 HOP_BY_HOP_HEADERS = frozenset({
