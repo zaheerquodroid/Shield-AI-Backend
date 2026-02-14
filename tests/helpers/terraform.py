@@ -238,6 +238,11 @@ def parse_proxy_ecs_module() -> dict[str, Any]:
     return parse_tf_dir(os.path.join(MODULES_DIR, "proxy-ecs"))
 
 
+def parse_cloudflare_edge_module() -> dict[str, Any]:
+    """Convenience: parse the cloudflare-edge module directory."""
+    return parse_tf_dir(os.path.join(MODULES_DIR, "cloudflare-edge"))
+
+
 def find_rules_in_waf(waf_resource: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract all rule blocks from a WAF WebACL resource.
 

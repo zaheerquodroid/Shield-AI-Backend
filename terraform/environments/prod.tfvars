@@ -28,3 +28,6 @@ cloudfront_log_bucket      = "shieldai-cloudfront-logs-prod.s3.amazonaws.com"
 # IMPORTANT: cloudfront_origin_verify_secret must be provided via:
 #   TF_VAR_cloudfront_origin_verify_secret or -var flag (>= 32 chars)
 # Do NOT hardcode secrets in tfvars files.
+
+# Cloudflare — disabled (use CloudFront for AWS-native deployments)
+enable_cloudflare = false

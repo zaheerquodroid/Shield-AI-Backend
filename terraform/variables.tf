@@ -206,3 +206,125 @@ variable "cloudfront_log_bucket" {
   type        = string
   default     = ""
 }
+
+# --- Cloudflare edge variables ---
+
+variable "enable_cloudflare" {
+  description = "Enable Cloudflare edge security module (alternative to CloudFront)"
+  type        = bool
+  default     = false
+}
+
+variable "cloudflare_zone_id" {
+  description = "Cloudflare zone ID for the customer domain"
+  type        = string
+  default     = ""
+}
+
+variable "cloudflare_domain" {
+  description = "Customer domain name to protect via Cloudflare"
+  type        = string
+  default     = ""
+}
+
+variable "cloudflare_origin" {
+  description = "Origin server address (defaults to ALB DNS name if empty)"
+  type        = string
+  default     = ""
+}
+
+variable "cloudflare_enable_owasp" {
+  description = "Enable OWASP Core Ruleset on Cloudflare WAF"
+  type        = bool
+  default     = true
+}
+
+variable "cloudflare_enable_credentials_check" {
+  description = "Enable Exposed Credentials Check on Cloudflare WAF"
+  type        = bool
+  default     = true
+}
+
+variable "cloudflare_auth_rate_limit" {
+  description = "Cloudflare auth endpoint rate limit (requests per minute per IP)"
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.cloudflare_auth_rate_limit > 0 && var.cloudflare_auth_rate_limit <= 10000
+    error_message = "cloudflare_auth_rate_limit must be between 1 and 10000"
+  }
+}
+
+variable "cloudflare_api_rate_limit" {
+  description = "Cloudflare API endpoint rate limit (requests per minute per IP)"
+  type        = number
+  default     = 100
+
+  validation {
+    condition     = var.cloudflare_api_rate_limit > 0 && var.cloudflare_api_rate_limit <= 100000
+    error_message = "cloudflare_api_rate_limit must be between 1 and 100000"
+  }
+}
+
+variable "cloudflare_global_rate_limit" {
+  description = "Cloudflare global rate limit (requests per minute per IP)"
+  type        = number
+  default     = 500
+
+  validation {
+    condition     = var.cloudflare_global_rate_limit > 0 && var.cloudflare_global_rate_limit <= 100000
+    error_message = "cloudflare_global_rate_limit must be between 1 and 100000"
+  }
+}
+
+variable "cloudflare_ssl_mode" {
+  description = "Cloudflare SSL mode — only 'strict' or 'full' allowed"
+  type        = string
+  default     = "strict"
+
+  validation {
+    condition     = contains(["strict", "full"], var.cloudflare_ssl_mode)
+    error_message = "cloudflare_ssl_mode must be 'strict' or 'full' — 'flexible' and 'off' are insecure"
+  }
+}
+
+variable "cloudflare_min_tls_version" {
+  description = "Cloudflare minimum TLS version — only 1.2+ allowed"
+  type        = string
+  default     = "1.2"
+
+  validation {
+    condition     = contains(["1.2", "1.3"], var.cloudflare_min_tls_version)
+    error_message = "cloudflare_min_tls_version must be '1.2' or '1.3' — TLS 1.0/1.1 are deprecated"
+  }
+}
+
+variable "cloudflare_always_use_https" {
+  description = "Cloudflare always redirect HTTP to HTTPS"
+  type        = bool
+  default     = true
+}
+
+variable "cloudflare_enable_bot_fight_mode" {
+  description = "Enable Cloudflare Bot Fight Mode"
+  type        = bool
+  default     = true
+}
+
+variable "cloudflare_security_level" {
+  description = "Cloudflare security level (low, medium, high, under_attack)"
+  type        = string
+  default     = "medium"
+
+  validation {
+    condition     = contains(["low", "medium", "high", "under_attack"], var.cloudflare_security_level)
+    error_message = "cloudflare_security_level must be one of: low, medium, high, under_attack"
+  }
+}
+
+variable "cloudflare_dns_proxied" {
+  description = "Whether Cloudflare DNS record is proxied (orange cloud)"
+  type        = bool
+  default     = true
+}

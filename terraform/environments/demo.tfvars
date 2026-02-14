@@ -21,3 +21,6 @@ header_preset      = "balanced"
 
 # CloudFront — disabled by default for demo (opt-in)
 enable_cloudfront = false
+
+# Cloudflare — disabled by default for demo (opt-in)
+enable_cloudflare = false

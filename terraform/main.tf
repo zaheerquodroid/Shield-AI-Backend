@@ -11,6 +11,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -127,4 +131,53 @@ module "cloudfront_saas" {
   login_path_pattern         = var.login_path_pattern
   enable_logging             = var.cloudfront_enable_logging
   log_bucket_domain_name     = var.cloudfront_log_bucket
+}
+
+# Fail-safe: CloudFront and Cloudflare should not be enabled simultaneously.
+# Both create DNS/CDN infrastructure that would conflict.
+check "cloudfront_cloudflare_mutual_exclusion" {
+  assert {
+    condition     = !(var.enable_cloudfront && var.enable_cloudflare)
+    error_message = "Cannot enable both CloudFront and Cloudflare simultaneously. Use one edge platform per deployment."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Cloudflare Edge Security Module — Alternative to AWS CloudFront
+# Provides WAF, rate limiting, security headers, and zone security settings
+# for non-AWS or Cloudflare-preferred deployments.
+# ---------------------------------------------------------------------------
+module "cloudflare_edge" {
+  count  = var.enable_cloudflare ? 1 : 0
+  source = "./modules/cloudflare-edge"
+
+  zone_id     = var.cloudflare_zone_id
+  environment = var.environment
+  domain      = var.cloudflare_domain
+  origin      = var.cloudflare_origin != "" ? var.cloudflare_origin : module.proxy_ecs.alb_dns_name
+
+  # WAF
+  waf_mode                 = var.waf_block_mode ? "block" : "log"
+  enable_owasp_ruleset     = var.cloudflare_enable_owasp
+  enable_credentials_check = var.cloudflare_enable_credentials_check
+
+  # Rate limiting
+  auth_rate_limit    = var.cloudflare_auth_rate_limit
+  api_rate_limit     = var.cloudflare_api_rate_limit
+  global_rate_limit  = var.cloudflare_global_rate_limit
+  login_path_pattern = var.login_path_pattern
+
+  # Security headers
+  header_preset = var.header_preset
+  csp_policy    = var.csp_policy
+
+  # Zone settings
+  ssl_mode              = var.cloudflare_ssl_mode
+  min_tls_version       = var.cloudflare_min_tls_version
+  always_use_https      = var.cloudflare_always_use_https
+  enable_bot_fight_mode = var.cloudflare_enable_bot_fight_mode
+  security_level        = var.cloudflare_security_level
+
+  # DNS
+  dns_proxied = var.cloudflare_dns_proxied
 }

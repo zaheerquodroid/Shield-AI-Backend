@@ -49,3 +49,20 @@ output "cloudfront_waf_arn" {
   description = "CloudFront WAF WebACL ARN"
   value       = var.enable_cloudfront ? module.cloudfront_saas[0].waf_web_acl_arn : ""
 }
+
+# --- Cloudflare outputs (conditional) ---
+
+output "cloudflare_waf_ruleset_id" {
+  description = "Cloudflare WAF ruleset ID"
+  value       = var.enable_cloudflare ? module.cloudflare_edge[0].waf_ruleset_id : ""
+}
+
+output "cloudflare_rate_limiting_ruleset_id" {
+  description = "Cloudflare rate limiting ruleset ID"
+  value       = var.enable_cloudflare ? module.cloudflare_edge[0].rate_limiting_ruleset_id : ""
+}
+
+output "cloudflare_dns_record_hostname" {
+  description = "Cloudflare DNS record hostname"
+  value       = var.enable_cloudflare ? module.cloudflare_edge[0].dns_record_hostname : ""
+}
