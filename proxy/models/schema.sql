@@ -151,3 +151,52 @@ DROP POLICY IF EXISTS tenant_isolation ON webhooks;
 CREATE POLICY tenant_isolation ON webhooks
     USING (customer_id = current_setting('app.current_tenant_id', true)::uuid)
     WITH CHECK (customer_id = current_setting('app.current_tenant_id', true)::uuid);
+
+-- Sprint 8: Customer domain onboarding (SHIELD-41)
+CREATE TABLE IF NOT EXISTS onboardings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    customer_domain VARCHAR(253) NOT NULL,
+    origin_url VARCHAR(2048) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'certificate_pending',
+    acm_certificate_arn VARCHAR(512) DEFAULT '',
+    validation_cname_name VARCHAR(512) DEFAULT '',
+    validation_cname_value VARCHAR(512) DEFAULT '',
+    distribution_tenant_id VARCHAR(512) DEFAULT '',
+    cloudfront_cname VARCHAR(512) DEFAULT '',
+    error_message VARCHAR(1024) DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Prevent duplicate active onboardings for the same domain
+CREATE UNIQUE INDEX IF NOT EXISTS idx_onboardings_domain_active
+    ON onboardings(customer_domain) WHERE status NOT IN ('offboarded', 'failed');
+
+CREATE INDEX IF NOT EXISTS idx_onboardings_customer_id ON onboardings(customer_id);
+CREATE INDEX IF NOT EXISTS idx_onboardings_status ON onboardings(status);
+
+-- Status constraint: only valid lifecycle states
+DO $$ BEGIN
+    ALTER TABLE onboardings ADD CONSTRAINT chk_onboarding_status
+        CHECK (status IN ('certificate_pending', 'certificate_validated', 'tenant_created', 'active', 'failed', 'offboarded'));
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Grant DML to shieldai_app role
+GRANT SELECT, INSERT, UPDATE, DELETE ON onboardings TO shieldai_app;
+
+-- Revoke dangerous privileges
+REVOKE TRUNCATE ON onboardings FROM shieldai_app;
+REVOKE REFERENCES ON onboardings FROM shieldai_app;
+REVOKE TRIGGER ON onboardings FROM shieldai_app;
+
+-- Enable RLS
+ALTER TABLE onboardings ENABLE ROW LEVEL SECURITY;
+
+-- RLS policy: customer_id = tenant
+DROP POLICY IF EXISTS tenant_isolation ON onboardings;
+CREATE POLICY tenant_isolation ON onboardings
+    USING (customer_id = current_setting('app.current_tenant_id', true)::uuid)
+    WITH CHECK (customer_id = current_setting('app.current_tenant_id', true)::uuid);

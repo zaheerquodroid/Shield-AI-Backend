@@ -167,11 +167,13 @@ from proxy.api.config_routes import router as config_router  # noqa: E402
 from proxy.api.audit_routes import router as audit_router  # noqa: E402
 from proxy.api.webhook_routes import router as webhook_router  # noqa: E402
 from proxy.api.code_validation_routes import router as code_validation_router  # noqa: E402
+from proxy.api.onboarding_routes import router as onboarding_router  # noqa: E402
 
 app.include_router(config_router)
 app.include_router(audit_router)
 app.include_router(webhook_router)
 app.include_router(code_validation_router)
+app.include_router(onboarding_router)
 
 
 HOP_BY_HOP_HEADERS = frozenset({

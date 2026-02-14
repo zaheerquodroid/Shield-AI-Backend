@@ -310,7 +310,7 @@ class TestAC3_TenantFromContext:
 
 
 class TestAC4_RLSPolicies:
-    """AC4: schema.sql defines RLS policies on all four tenant-scoped tables."""
+    """AC4: schema.sql defines RLS policies on all five tenant-scoped tables."""
 
     @pytest.fixture(autouse=True)
     def _load_schema(self):
@@ -318,7 +318,7 @@ class TestAC4_RLSPolicies:
 
     @pytest.mark.parametrize(
         "table_name",
-        ["customers", "apps", "audit_logs", "webhooks"],
+        ["customers", "apps", "audit_logs", "webhooks", "onboardings"],
     )
     def test_enable_rls_on_all_tables(self, table_name):
         """Each tenant-scoped table has ALTER TABLE ... ENABLE ROW LEVEL SECURITY."""
@@ -329,7 +329,7 @@ class TestAC4_RLSPolicies:
 
     @pytest.mark.parametrize(
         "table_name",
-        ["customers", "apps", "audit_logs", "webhooks"],
+        ["customers", "apps", "audit_logs", "webhooks", "onboardings"],
     )
     def test_create_policy_on_all_tables(self, table_name):
         """Each table has a CREATE POLICY tenant_isolation statement."""
@@ -347,8 +347,8 @@ class TestAC4_RLSPolicies:
             r"current_setting\(\s*'app\.current_tenant_id'\s*,\s*(\w+)\s*\)",
             self.schema,
         )
-        assert len(matches) >= 4, (
-            f"Expected at least 4 current_setting calls, found {len(matches)}"
+        assert len(matches) >= 5, (
+            f"Expected at least 5 current_setting calls, found {len(matches)}"
         )
         for m in matches:
             assert m == "true", f"Expected 'true' but got '{m}'"
@@ -362,8 +362,8 @@ class TestAC4_RLSPolicies:
             self.schema,
             re.DOTALL | re.IGNORECASE,
         )
-        assert len(policy_blocks) == 4, (
-            f"Expected 4 policy blocks, found {len(policy_blocks)}"
+        assert len(policy_blocks) == 5, (
+            f"Expected 5 policy blocks, found {len(policy_blocks)}"
         )
         for block in policy_blocks:
             assert "WITH CHECK" in block, (
