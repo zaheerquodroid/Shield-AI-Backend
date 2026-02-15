@@ -1,0 +1,10 @@
+# RFC 9116 security.txt
+# https://www.rfc-editor.org/rfc/rfc9116
+
+Contact: {{SECURITY_CONTACT}}
+Expires: {{SECURITY_TXT_EXPIRES}}
+Encryption: {{SECURITY_TXT_ENCRYPTION}}
+Preferred-Languages: {{PREFERRED_LANGUAGES}}
+Canonical: {{SECURITY_TXT_CANONICAL}}
+Policy: {{SECURITY_TXT_POLICY}}
+Hiring: {{SECURITY_TXT_HIRING}}
