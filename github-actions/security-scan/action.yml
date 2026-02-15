@@ -47,6 +47,30 @@ inputs:
     description: "Fail the workflow if findings exceed severity threshold"
     required: false
     default: "true"
+  sbom-enabled:
+    description: "Enable SBOM (Software Bill of Materials) generation"
+    required: false
+    default: "false"
+  sbom-format:
+    description: "SBOM output format: cyclonedx-json"
+    required: false
+    default: "cyclonedx-json"
+  sbom-python:
+    description: "Generate Python SBOM with cyclonedx-py"
+    required: false
+    default: "true"
+  sbom-javascript:
+    description: "Generate JavaScript SBOM with @cyclonedx/cyclonedx-npm"
+    required: false
+    default: "true"
+  sbom-go:
+    description: "Generate Go SBOM with cyclonedx-gomod"
+    required: false
+    default: "true"
+  sbom-image-ref:
+    description: "Container image reference for SBOM generation with syft"
+    required: false
+    default: ""
 
 outputs:
   scan-result:
@@ -70,6 +94,12 @@ outputs:
   sarif-file:
     description: "Path to the merged SARIF file"
     value: ${{ steps.aggregate.outputs.sarif-file }}
+  sbom-file:
+    description: "Path to the merged SBOM file"
+    value: ${{ steps.sbom-merge.outputs.sbom-file }}
+  component-count:
+    description: "Number of deduplicated SBOM components"
+    value: ${{ steps.sbom-merge.outputs.component-count }}
 
 runs:
   using: "composite"
@@ -149,6 +179,83 @@ runs:
         format: "sarif"
         output: "${{ steps.setup.outputs.results-dir }}/trivy.sarif"
         exit-code: "0"
+
+    - name: Generate Python SBOM
+      id: sbom-python
+      if: inputs.sbom-enabled == 'true' && inputs.sbom-python == 'true'
+      shell: bash
+      run: |
+        SBOM_DIR="${RUNNER_TEMP}/shieldai-sbom-results"
+        mkdir -p "${SBOM_DIR}"
+        pip install cyclonedx-bom --quiet
+        cyclonedx-py environment \
+          --output "${SBOM_DIR}/python.cdx.json" \
+          --format json || true
+
+    - name: Generate JavaScript SBOM
+      id: sbom-javascript
+      if: inputs.sbom-enabled == 'true' && inputs.sbom-javascript == 'true' && hashFiles('package.json') != ''
+      shell: bash
+      run: |
+        SBOM_DIR="${RUNNER_TEMP}/shieldai-sbom-results"
+        mkdir -p "${SBOM_DIR}"
+        npx @cyclonedx/cyclonedx-npm \
+          --output-file "${SBOM_DIR}/javascript.cdx.json" \
+          --output-format json || true
+
+    - name: Generate Go SBOM
+      id: sbom-go
+      if: inputs.sbom-enabled == 'true' && inputs.sbom-go == 'true'
+      shell: bash
+      run: |
+        SBOM_DIR="${RUNNER_TEMP}/shieldai-sbom-results"
+        mkdir -p "${SBOM_DIR}"
+        go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+        cyclonedx-gomod mod \
+          -json \
+          -output "${SBOM_DIR}/go.cdx.json" || true
+
+    - name: Generate Docker image SBOM
+      id: sbom-image
+      if: inputs.sbom-enabled == 'true' && inputs.sbom-image-ref != ''
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.sbom-image-ref }}
+      run: |
+        SBOM_DIR="${RUNNER_TEMP}/shieldai-sbom-results"
+        mkdir -p "${SBOM_DIR}"
+        SYFT_VERSION="v1.19.0"
+        curl -sSfL -o /tmp/syft_install.sh https://raw.githubusercontent.com/anchore/syft/${SYFT_VERSION}/install.sh
+        chmod +x /tmp/syft_install.sh
+        /tmp/syft_install.sh -b /usr/local/bin "${SYFT_VERSION}"
+        rm -f /tmp/syft_install.sh
+        syft "${IMAGE_REF}" \
+          -o cyclonedx-json="${SBOM_DIR}/image.cdx.json" || true
+
+    - name: Merge SBOMs
+      id: sbom-merge
+      if: inputs.sbom-enabled == 'true' && always()
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        SBOM_DIR="${RUNNER_TEMP}/shieldai-sbom-results"
+        mkdir -p "${SBOM_DIR}"
+        cd "${ACTION_PATH}/scripts"
+        python merge_sboms.py \
+          --sbom-dir "${SBOM_DIR}" \
+          --output "${SBOM_DIR}/merged.cdx.json" \
+          --github-output "${GITHUB_OUTPUT}"
+
+    - name: Upload SBOM artifact
+      id: upload-sbom
+      if: inputs.sbom-enabled == 'true' && always()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: shieldai-sbom
+        path: "${{ runner.temp }}/shieldai-sbom-results/merged.cdx.json"
+        retention-days: 90
 
     - name: Aggregate SARIF results
       id: aggregate
