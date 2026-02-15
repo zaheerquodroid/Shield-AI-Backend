@@ -91,18 +91,21 @@ def sanitize_uri(uri: str) -> str:
     return uri
 
 
-def _sanitize_annotation_text(text: str) -> str:
+def _sanitize_annotation_text(text: object) -> str:
     """Remove characters that could inject workflow commands.
 
     Strips newlines, carriage returns, and :: sequences that could
     produce rogue workflow commands in annotation output.
+    Accepts non-string input defensively (null values from malformed SARIF).
 
     Args:
-        text: Raw text from SARIF message/ruleId.
+        text: Raw text from SARIF message/ruleId. May be None.
 
     Returns:
         Sanitized single-line text.
     """
+    if not isinstance(text, str):
+        return "unknown"
     # Strip newlines and carriage returns to prevent command injection
     text = text.replace("\n", " ").replace("\r", " ")
     # Truncate to prevent excessive annotation length
@@ -145,11 +148,15 @@ def normalize_severity(result: dict, rules: dict) -> str:
     Returns:
         Normalized severity: critical, high, medium, or low.
     """
-    rule_id = result.get("ruleId", "")
+    rule_id = result.get("ruleId") or ""
     rule = rules.get(rule_id, {})
+    if not isinstance(rule, dict):
+        rule = {}
 
     # Check for security-severity in rule properties
-    props = rule.get("properties", {})
+    props = rule.get("properties")
+    if not isinstance(props, dict):
+        props = {}
     score_str = props.get("security-severity", "")
     if score_str:
         try:
@@ -173,8 +180,10 @@ def normalize_severity(result: dict, rules: dict) -> str:
     return SARIF_LEVEL_MAP.get(level, "medium")
 
 
-def _mask_tokens(text: str) -> str:
+def _mask_tokens(text: object) -> str:
     """Replace token patterns with [MASKED] in text."""
+    if not isinstance(text, str):
+        return ""
     for pattern in TOKEN_MASK_PATTERNS:
         text = pattern.sub("[MASKED]", text)
     return text
@@ -255,22 +264,33 @@ def emit_annotations(results: list[dict], rules: dict) -> None:
             break
 
         severity = normalize_severity(result, rules)
-        raw_message = result.get("message", {}).get("text", "Finding")
+        # Guard against null values — SARIF keys present with JSON null
+        # cause .get() to return None instead of the default dict/string.
+        msg_obj = result.get("message")
+        raw_message = msg_obj.get("text", "Finding") if isinstance(msg_obj, dict) else "Finding"
         message = _sanitize_annotation_text(_mask_tokens(raw_message))
-        rule_id = _sanitize_annotation_text(result.get("ruleId", "unknown"))
+        rule_id = _sanitize_annotation_text(result.get("ruleId") or "unknown")
 
-        # Extract location
-        locations = result.get("locations", [])
+        # Extract location — guard every level against null
+        locations = result.get("locations")
+        if not isinstance(locations, list):
+            locations = []
         file_path = ""
         line = 1
         if locations and isinstance(locations[0], dict):
-            phys = locations[0].get("physicalLocation", {})
-            artifact = phys.get("artifactLocation", {})
-            file_path = sanitize_uri(artifact.get("uri", ""))
+            phys = locations[0].get("physicalLocation")
+            if not isinstance(phys, dict):
+                phys = {}
+            artifact = phys.get("artifactLocation")
+            if not isinstance(artifact, dict):
+                artifact = {}
+            file_path = sanitize_uri(artifact.get("uri") or "")
             # Strip commas — they separate annotation parameters (file=X,line=Y)
             # and could inject extra parameters like title= or col=
             file_path = file_path.replace(",", "")
-            region = phys.get("region", {})
+            region = phys.get("region")
+            if not isinstance(region, dict):
+                region = {}
             line = region.get("startLine", 1)
             if not isinstance(line, int) or line < 1:
                 line = 1
@@ -394,24 +414,50 @@ def main() -> int:
         )
         args.threshold = "high"
 
+    # Validate results directory — empty string defaults to CWD which is a silent-pass risk
+    if not args.results_dir or not os.path.isabs(args.results_dir):
+        print(
+            f"::error::results-dir must be a non-empty absolute path, got '{args.results_dir}'",
+            file=sys.stderr,
+        )
+        return 1
+
     # Load all SARIF files
     runs = load_sarif_files(args.results_dir)
+
+    if not runs:
+        print(
+            "::warning::No valid SARIF files found — no scanners produced output",
+            file=sys.stderr,
+        )
 
     # Build rules lookup and collect results
     all_rules: dict[str, dict] = {}
     all_results: list[dict] = []
 
     for run in runs:
-        # Build rules index
-        tool = run.get("tool", {})
-        driver = tool.get("driver", {})
-        for rule in driver.get("rules", []):
+        # Build rules index — guard against null tool/driver
+        tool = run.get("tool")
+        if not isinstance(tool, dict):
+            tool = {}
+        driver = tool.get("driver")
+        if not isinstance(driver, dict):
+            driver = {}
+        rules_list = driver.get("rules")
+        if not isinstance(rules_list, list):
+            rules_list = []
+        for rule in rules_list:
+            if not isinstance(rule, dict):
+                continue
             rule_id = rule.get("id", "")
             if rule_id:
                 all_rules[rule_id] = rule
 
         # Collect results (cap at MAX_FINDINGS)
-        for result in run.get("results", []):
+        results_list = run.get("results")
+        if not isinstance(results_list, list):
+            results_list = []
+        for result in results_list:
             if len(all_results) >= MAX_FINDINGS:
                 break
             if isinstance(result, dict):

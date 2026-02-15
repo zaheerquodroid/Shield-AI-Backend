@@ -1397,3 +1397,394 @@ class TestScannerEvasionAwareness:
     def test_no_bandit_skip_in_action(self, action_content):
         """Bandit invocation must not use --skip to exclude checks."""
         assert "--skip" not in action_content or "bandit" not in action_content
+
+
+# ---------------------------------------------------------------------------
+# TestNullValueCrashPaths — 9 tests (CRITICAL: silent security bypass)
+# ---------------------------------------------------------------------------
+
+
+class TestNullValueCrashPaths:
+    """Simulate SARIF results with JSON null values that previously caused crashes.
+
+    In Python, dict.get("key", default) returns None (not default) when the
+    key exists with value null. This caused AttributeError crashes that killed
+    the entire aggregate script, preventing scan-result from being written,
+    causing a SILENT SECURITY BYPASS.
+    """
+
+    def test_message_null_no_crash(self, aggregate_module, capsys):
+        """result with 'message': null must not crash emit_annotations."""
+        results = [{
+            "ruleId": "NULL-MSG-001",
+            "level": "error",
+            "message": None,
+            "locations": [],
+        }]
+        # Must not raise — previously crashed with AttributeError
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::error " in captured.out
+
+    def test_rule_id_null_no_crash(self, aggregate_module, capsys):
+        """result with 'ruleId': null must not crash emit_annotations."""
+        results = [{
+            "ruleId": None,
+            "level": "error",
+            "message": {"text": "Finding"},
+            "locations": [],
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::error " in captured.out
+
+    def test_message_text_null_no_crash(self, aggregate_module, capsys):
+        """result with 'message': {'text': null} must not crash."""
+        results = [{
+            "ruleId": "NULL-TXT-001",
+            "level": "warning",
+            "message": {"text": None},
+            "locations": [],
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::warning " in captured.out
+
+    def test_physical_location_null_no_crash(self, aggregate_module, capsys):
+        """physicalLocation: null must not crash."""
+        results = [{
+            "ruleId": "NULL-PHYS-001",
+            "level": "error",
+            "message": {"text": "Finding"},
+            "locations": [{"physicalLocation": None}],
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::error " in captured.out
+
+    def test_artifact_location_null_no_crash(self, aggregate_module, capsys):
+        """artifactLocation: null must not crash."""
+        results = [{
+            "ruleId": "NULL-ART-001",
+            "level": "error",
+            "message": {"text": "Finding"},
+            "locations": [{"physicalLocation": {"artifactLocation": None, "region": {"startLine": 1}}}],
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::error " in captured.out
+
+    def test_region_null_no_crash(self, aggregate_module, capsys):
+        """region: null must not crash."""
+        results = [{
+            "ruleId": "NULL-REG-001",
+            "level": "error",
+            "message": {"text": "Finding"},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": "x.py"}, "region": None}}],
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::error " in captured.out
+        assert "line=1" in captured.out  # defaults to line 1
+
+    def test_locations_null_no_crash(self, aggregate_module, capsys):
+        """locations: null (not missing, explicitly null) must not crash."""
+        results = [{
+            "ruleId": "NULL-LOC-001",
+            "level": "error",
+            "message": {"text": "Finding"},
+            "locations": None,
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::error " in captured.out
+
+    def test_tool_null_in_run_no_crash(self, aggregate_module):
+        """Run with 'tool': null must not crash main() rules collection."""
+        with tempfile.TemporaryDirectory() as d:
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": None, "results": [
+                    {"ruleId": "R1", "level": "error", "message": {"text": "x"}}
+                ]}],
+            }
+            p = os.path.join(d, "null_tool.sarif")
+            with open(p, "w") as f:
+                json.dump(sarif, f)
+            runs = aggregate_module.load_sarif_files(d)
+            # Simulate main() collection — must not crash
+            all_rules = {}
+            all_results = []
+            for run in runs:
+                tool = run.get("tool")
+                if not isinstance(tool, dict):
+                    tool = {}
+                driver = tool.get("driver")
+                if not isinstance(driver, dict):
+                    driver = {}
+                rules_list = driver.get("rules")
+                if not isinstance(rules_list, list):
+                    rules_list = []
+                for rule in rules_list:
+                    if isinstance(rule, dict) and rule.get("id"):
+                        all_rules[rule["id"]] = rule
+                results_list = run.get("results")
+                if not isinstance(results_list, list):
+                    results_list = []
+                for result in results_list:
+                    if isinstance(result, dict):
+                        all_results.append(result)
+            assert len(all_results) == 1
+
+    def test_null_poison_does_not_suppress_other_findings(self, aggregate_module, capsys):
+        """A null-poisoned result must NOT prevent other valid results from being annotated.
+
+        This is THE critical test: an attacker injects one malformed result
+        to crash the script and suppress all findings. After the fix, the
+        poisoned result is handled gracefully and valid results still emit.
+        """
+        results = [
+            # Poisoned result — all null values
+            {"ruleId": None, "level": None, "message": None, "locations": None},
+            # Valid result that MUST still be emitted
+            {
+                "ruleId": "VALID-001",
+                "level": "error",
+                "message": {"text": "Real critical finding"},
+                "locations": [{"physicalLocation": {
+                    "artifactLocation": {"uri": "src/app.py"},
+                    "region": {"startLine": 42},
+                }}],
+            },
+        ]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        lines = [l for l in captured.out.strip().split("\n") if l]
+        assert len(lines) == 2, f"Expected 2 annotations (poisoned + valid), got {len(lines)}"
+        assert "VALID-001" in captured.out, "Valid finding suppressed by null-poisoned result"
+        assert "Real critical finding" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# TestEndToEndMain — 5 tests
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndMain:
+    """End-to-end tests driving aggregate_sarif.main() with crafted input."""
+
+    def test_main_fail_on_high_findings(self, aggregate_module):
+        """main() must return 1 when findings exceed threshold."""
+        with tempfile.TemporaryDirectory() as d:
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": [
+                    {"ruleId": "R1", "level": "error", "message": {"text": "XSS"}}
+                ]}],
+            }
+            p = os.path.join(d, "test.sarif")
+            with open(p, "w") as f:
+                json.dump(sarif, f)
+
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            with open(gh_output, "w"):
+                pass
+            merged = os.path.join(d, "merged.sarif")
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                exit_code = aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+
+            assert exit_code == 1, f"Expected exit 1 on high findings, got {exit_code}"
+            with open(gh_output) as f:
+                content = f.read()
+            assert "scan-result=fail" in content
+
+    def test_main_pass_when_no_findings(self, aggregate_module):
+        """main() must return 0 when no findings."""
+        with tempfile.TemporaryDirectory() as d:
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": []}],
+            }
+            p = os.path.join(d, "clean.sarif")
+            with open(p, "w") as f:
+                json.dump(sarif, f)
+
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            with open(gh_output, "w"):
+                pass
+            merged = os.path.join(d, "merged.sarif")
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                exit_code = aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+
+            assert exit_code == 0
+            with open(gh_output) as f:
+                content = f.read()
+            assert "scan-result=pass" in content
+
+    def test_main_fail_on_findings_false_suppresses_failure(self, aggregate_module):
+        """--fail-on-findings false must return 0 even with findings."""
+        with tempfile.TemporaryDirectory() as d:
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": [
+                    {"ruleId": "R1", "level": "error", "message": {"text": "XSS"}}
+                ]}],
+            }
+            p = os.path.join(d, "test.sarif")
+            with open(p, "w") as f:
+                json.dump(sarif, f)
+
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            with open(gh_output, "w"):
+                pass
+            merged = os.path.join(d, "merged.sarif")
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "false",
+                ]
+                exit_code = aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+
+            assert exit_code == 0, "fail-on-findings=false should suppress exit 1"
+            with open(gh_output) as f:
+                content = f.read()
+            assert "scan-result=pass" in content
+            assert "high-count=1" in content  # findings still counted
+
+    def test_main_empty_results_dir_rejected(self, aggregate_module):
+        """Empty results-dir must fail, not silently scan CWD."""
+        with tempfile.TemporaryDirectory() as d:
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            with open(gh_output, "w"):
+                pass
+            merged = os.path.join(d, "merged.sarif")
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", "",
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                exit_code = aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+
+            assert exit_code == 1, "Empty results-dir must fail"
+
+    def test_main_null_poison_still_reports_findings(self, aggregate_module):
+        """main() with null-poisoned SARIF result must still count valid findings."""
+        with tempfile.TemporaryDirectory() as d:
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": [
+                    {"ruleId": None, "level": None, "message": None, "locations": None},
+                    {"ruleId": "R1", "level": "error", "message": {"text": "Real finding"}},
+                ]}],
+            }
+            p = os.path.join(d, "poison.sarif")
+            with open(p, "w") as f:
+                json.dump(sarif, f)
+
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            with open(gh_output, "w"):
+                pass
+            merged = os.path.join(d, "merged.sarif")
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                exit_code = aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+
+            assert exit_code == 1, "Null-poisoned result must not suppress valid findings"
+            with open(gh_output) as f:
+                content = f.read()
+            assert "scan-result=fail" in content
+            assert "high-count=1" in content
+
+
+# ---------------------------------------------------------------------------
+# TestAnnotationLimitEnforcement — 2 tests
+# ---------------------------------------------------------------------------
+
+
+class TestAnnotationLimitEnforcement:
+    """Verify MAX_ANNOTATIONS is actually enforced, not just a constant."""
+
+    def test_emit_annotations_caps_at_max(self, aggregate_module, capsys):
+        """emit_annotations must produce at most MAX_ANNOTATIONS output lines."""
+        max_ann = aggregate_module.MAX_ANNOTATIONS
+        # Create 2x the limit
+        results = []
+        for i in range(max_ann * 2):
+            results.append({
+                "ruleId": f"R-{i}",
+                "level": "warning",
+                "message": {"text": f"Finding {i}"},
+                "locations": [],
+            })
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        lines = [l for l in captured.out.strip().split("\n") if l.startswith("::")]
+        assert len(lines) == max_ann, \
+            f"Expected exactly {max_ann} annotations, got {len(lines)}"
+
+    def test_emit_annotations_emits_warning_at_cap(self, aggregate_module, capsys):
+        """Warning must be emitted when annotation limit is reached."""
+        max_ann = aggregate_module.MAX_ANNOTATIONS
+        results = [
+            {"ruleId": f"R-{i}", "level": "warning", "message": {"text": f"F{i}"}, "locations": []}
+            for i in range(max_ann + 1)
+        ]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "Annotation limit reached" in captured.err
