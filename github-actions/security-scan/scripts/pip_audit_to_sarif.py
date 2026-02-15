@@ -6,7 +6,6 @@ Usage:
 """
 
 import json
-import os
 import sys
 
 MAX_INPUT_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -21,13 +20,14 @@ def convert(input_path: str, output_path: str) -> None:
         output_path: Path to write SARIF file.
     """
     try:
-        file_size = os.path.getsize(input_path)
-        if file_size > MAX_INPUT_SIZE:
+        # Size-limited read to prevent TOCTOU race (stat then open)
+        with open(input_path) as f:
+            raw = f.read(MAX_INPUT_SIZE + 1)
+        if len(raw) > MAX_INPUT_SIZE:
             print(f"::warning::pip-audit input exceeds {MAX_INPUT_SIZE} bytes, skipping", file=sys.stderr)
             data = {"dependencies": []}
         else:
-            with open(input_path) as f:
-                data = json.load(f)
+            data = json.loads(raw)
     except (json.JSONDecodeError, OSError, FileNotFoundError):
         data = {"dependencies": []}
 
@@ -55,7 +55,7 @@ def convert(input_path: str, output_path: str) -> None:
                 name = dep.get("name") or "unknown"
                 version = dep.get("version") or "unknown"
                 fix_versions = vuln.get("fix_versions", [])
-                fix_str = ", ".join(str(v) for v in fix_versions) if isinstance(fix_versions, list) else ""
+                fix_str = ", ".join(str(v)[:100] for v in fix_versions[:20]) if isinstance(fix_versions, list) else ""
 
                 # Build rule
                 if vuln_id not in rule_ids:

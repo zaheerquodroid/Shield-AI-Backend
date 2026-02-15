@@ -28,6 +28,7 @@ MAX_SARIF_SIZE = 10 * 1024 * 1024  # 10 MB per file
 MAX_FINDINGS = 5000
 MAX_ANNOTATIONS = 50
 MAX_SARIF_FILES = 50
+MAX_RULES = 50000
 
 # Token patterns to mask in annotations
 TOKEN_MASK_PATTERNS = [
@@ -108,6 +109,8 @@ def _sanitize_annotation_text(text: object) -> str:
         return "unknown"
     # Strip newlines and carriage returns to prevent command injection
     text = text.replace("\n", " ").replace("\r", " ")
+    # Strip :: sequences that could inject workflow commands
+    text = text.replace("::", " ")
     # Truncate to prevent excessive annotation length
     if len(text) > 500:
         text = text[:497] + "..."
@@ -223,17 +226,17 @@ def load_sarif_files(results_dir: str) -> list[dict]:
             )
             continue
 
-        # Size check
-        if sarif_file.stat().st_size > MAX_SARIF_SIZE:
-            print(
-                f"::warning::Skipping {sarif_file.name}: exceeds {MAX_SARIF_SIZE} byte limit",
-                file=sys.stderr,
-            )
-            continue
-
         try:
+            # Read with size limit to prevent TOCTOU race (stat then open)
+            # — a file could be swapped between stat() and open()
             with open(sarif_file) as f:
-                raw = f.read()
+                raw = f.read(MAX_SARIF_SIZE + 1)
+            if len(raw) > MAX_SARIF_SIZE:
+                print(
+                    f"::warning::Skipping {sarif_file.name}: exceeds {MAX_SARIF_SIZE} byte limit",
+                    file=sys.stderr,
+                )
+                continue
             # Strip UTF-8 BOM — Windows editors add it, json.loads rejects it
             if raw.startswith("\ufeff"):
                 raw = raw[1:]
@@ -460,6 +463,8 @@ def main() -> int:
         if not isinstance(rules_list, list):
             rules_list = []
         for rule in rules_list:
+            if len(all_rules) >= MAX_RULES:
+                break
             if not isinstance(rule, dict):
                 continue
             rule_id = rule.get("id", "")
@@ -484,6 +489,19 @@ def main() -> int:
 
     # Emit annotations
     emit_annotations(all_results, all_rules)
+
+    # Mask tokens in result messages before writing merged SARIF
+    # (prevents secrets from scanners like gitleaks leaking into uploaded SARIF)
+    for run in runs:
+        run_results = run.get("results")
+        if not isinstance(run_results, list):
+            continue
+        for r in run_results:
+            if not isinstance(r, dict):
+                continue
+            msg = r.get("message")
+            if isinstance(msg, dict) and isinstance(msg.get("text"), str):
+                msg["text"] = _mask_tokens(msg["text"])
 
     # Merge and write SARIF
     merged = merge_sarif(runs)

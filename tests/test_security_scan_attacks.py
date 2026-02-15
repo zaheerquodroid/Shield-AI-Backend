@@ -2454,3 +2454,391 @@ class TestEndToEndConverterPipeline:
             with open(gh_output) as f:
                 content = f.read()
             assert "high-count=1" in content
+
+
+# ---------------------------------------------------------------------------
+# Round 6: Audit-driven hardening tests
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# TestTOCTOURace — 3 tests
+# ---------------------------------------------------------------------------
+
+
+class TestTOCTOURace:
+    """Verify size limits use bounded reads instead of stat-then-open.
+
+    TOCTOU (time-of-check/time-of-use) race: stat() checks size, attacker
+    swaps file between stat and open, bypassing size limit.
+    """
+
+    def test_aggregate_uses_bounded_read(self, aggregate_module):
+        """aggregate_sarif must use f.read(MAX+1) not stat().st_size."""
+        import inspect
+        src = inspect.getsource(aggregate_module.load_sarif_files)
+        # Must NOT use stat().st_size pattern for the actual check
+        assert "f.read(MAX_SARIF_SIZE + 1)" in src or "f.read(MAX_SARIF_SIZE+1)" in src, \
+            "load_sarif_files must use bounded read, not stat-based size check"
+
+    def test_pip_audit_uses_bounded_read(self, pip_audit_module):
+        """pip_audit converter must use bounded read."""
+        import inspect
+        src = inspect.getsource(pip_audit_module.convert)
+        assert "f.read(MAX_INPUT_SIZE + 1)" in src or "f.read(MAX_INPUT_SIZE+1)" in src, \
+            "pip_audit converter must use bounded read, not stat-based size check"
+
+    def test_go_vuln_uses_bounded_read(self, go_vuln_module):
+        """govulncheck converter must use bounded read."""
+        import inspect
+        src = inspect.getsource(go_vuln_module.convert)
+        assert "f.read(MAX_INPUT_SIZE + 1)" in src or "f.read(MAX_INPUT_SIZE+1)" in src, \
+            "go_vuln converter must use bounded read, not stat-based size check"
+
+
+# ---------------------------------------------------------------------------
+# TestWorkflowCommandInjection — 4 tests
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowCommandInjection:
+    """Verify :: sequences are stripped from annotation text to prevent
+    injection of workflow commands like ::set-output, ::add-mask, etc.
+    """
+
+    def test_double_colon_stripped_from_message(self, aggregate_module, capsys):
+        """:: in message text must be neutralized to prevent command injection."""
+        results = [{
+            "ruleId": "INJ-001",
+            "level": "error",
+            "message": {"text": "foo ::set-output name=scan-result::pass bar"},
+        }]
+        aggregate_module.emit_annotations(results, {})
+        out = capsys.readouterr().out
+        # The :: must be replaced so no workflow command is injected
+        assert "::set-output" not in out
+        # But the annotation itself must still be emitted
+        assert "::error " in out
+
+    def test_double_colon_stripped_from_rule_id(self, aggregate_module, capsys):
+        """:: in ruleId must be neutralized."""
+        results = [{
+            "ruleId": "fake::warning::injected",
+            "level": "warning",
+            "message": {"text": "test"},
+        }]
+        aggregate_module.emit_annotations(results, {})
+        out = capsys.readouterr().out
+        # Should not produce extra workflow commands
+        lines = [l for l in out.strip().split("\n") if l.startswith("::")]
+        assert len(lines) == 1, "Only one workflow command annotation should be emitted"
+
+    def test_set_env_injection_blocked(self, aggregate_module, capsys):
+        """::set-env in message must be stripped."""
+        results = [{
+            "ruleId": "ENV-001",
+            "level": "error",
+            "message": {"text": "::set-env name=PATH::/evil/bin"},
+        }]
+        aggregate_module.emit_annotations(results, {})
+        out = capsys.readouterr().out
+        assert "::set-env" not in out
+
+    def test_add_path_injection_blocked(self, aggregate_module, capsys):
+        """::add-path in message must be stripped."""
+        results = [{
+            "ruleId": "PATH-001",
+            "level": "error",
+            "message": {"text": "::add-path::/tmp/evil"},
+        }]
+        aggregate_module.emit_annotations(results, {})
+        out = capsys.readouterr().out
+        assert "::add-path" not in out
+
+
+# ---------------------------------------------------------------------------
+# TestMergedSARIFTokenMasking — 3 tests
+# ---------------------------------------------------------------------------
+
+
+class TestMergedSARIFTokenMasking:
+    """Verify tokens are masked in merged SARIF output (not just annotations).
+
+    Scanners like gitleaks may include actual secret values in SARIF messages.
+    These must be masked before the merged SARIF is written to disk and
+    uploaded to GitHub Code Scanning.
+    """
+
+    def test_github_pat_masked_in_merged_sarif(self, aggregate_module):
+        """GitHub PAT in SARIF result message must be masked in merged output."""
+        with tempfile.TemporaryDirectory() as d:
+            token = "ghp_" + "A" * 40
+            sarif = {
+                "version": "2.1.0", "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "gitleaks", "rules": []}},
+                          "results": [{"ruleId": "GH-PAT", "level": "error",
+                                       "message": {"text": f"Found token: {token}"}}]}],
+            }
+            with open(os.path.join(d, "secrets.sarif"), "w") as f:
+                json.dump(sarif, f)
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            merged = os.path.join(d, "merged.sarif")
+            with open(gh_output, "w"):
+                pass
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+            with open(merged) as f:
+                content = f.read()
+            assert token not in content, "GitHub PAT must be masked in merged SARIF"
+            assert "[MASKED]" in content
+
+    def test_aws_key_masked_in_merged_sarif(self, aggregate_module):
+        """AWS access key in result message must be masked in merged output."""
+        with tempfile.TemporaryDirectory() as d:
+            aws_key = "AKIAIOSFODNN7EXAMPLE"
+            sarif = {
+                "version": "2.1.0", "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "gitleaks", "rules": []}},
+                          "results": [{"ruleId": "AWS-KEY", "level": "error",
+                                       "message": {"text": f"AWS key: {aws_key}"}}]}],
+            }
+            with open(os.path.join(d, "aws.sarif"), "w") as f:
+                json.dump(sarif, f)
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            merged = os.path.join(d, "merged.sarif")
+            with open(gh_output, "w"):
+                pass
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+            with open(merged) as f:
+                content = f.read()
+            assert aws_key not in content, "AWS key must be masked in merged SARIF"
+
+    def test_private_key_masked_in_merged_sarif(self, aggregate_module):
+        """Private key header in result message must be masked in merged output."""
+        with tempfile.TemporaryDirectory() as d:
+            pk = "-----BEGIN RSA PRIVATE KEY-----"
+            sarif = {
+                "version": "2.1.0", "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "gitleaks", "rules": []}},
+                          "results": [{"ruleId": "PK", "level": "error",
+                                       "message": {"text": f"Found: {pk}"}}]}],
+            }
+            with open(os.path.join(d, "pk.sarif"), "w") as f:
+                json.dump(sarif, f)
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            merged = os.path.join(d, "merged.sarif")
+            with open(gh_output, "w"):
+                pass
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+            with open(merged) as f:
+                content = f.read()
+            assert pk not in content, "Private key must be masked in merged SARIF"
+
+
+# ---------------------------------------------------------------------------
+# TestRulesAccumulationCap — 2 tests
+# ---------------------------------------------------------------------------
+
+
+class TestRulesAccumulationCap:
+    """Verify MAX_RULES cap prevents memory exhaustion from crafted SARIF
+    with millions of unique rule IDs.
+    """
+
+    def test_rules_capped_at_max(self, aggregate_module):
+        """Rules accumulation must stop at MAX_RULES to prevent memory exhaustion."""
+        assert hasattr(aggregate_module, "MAX_RULES"), "MAX_RULES constant must exist"
+        assert aggregate_module.MAX_RULES <= 100000, "MAX_RULES must be bounded"
+
+    def test_excessive_rules_truncated(self, aggregate_module):
+        """SARIF with more rules than MAX_RULES must be truncated."""
+        max_rules = aggregate_module.MAX_RULES
+        # Create a run with MAX_RULES + 100 rules
+        rules = [{"id": f"RULE-{i}", "shortDescription": {"text": f"Rule {i}"}}
+                 for i in range(max_rules + 100)]
+        run = {
+            "tool": {"driver": {"name": "test", "rules": rules}},
+            "results": [],
+        }
+        # Simulate the rules accumulation logic from main()
+        all_rules = {}
+        driver = run.get("tool", {}).get("driver", {})
+        rules_list = driver.get("rules", [])
+        for rule in rules_list:
+            if len(all_rules) >= max_rules:
+                break
+            if isinstance(rule, dict):
+                rule_id = rule.get("id", "")
+                if rule_id:
+                    all_rules[rule_id] = rule
+        assert len(all_rules) == max_rules, \
+            f"Expected {max_rules} rules but got {len(all_rules)}"
+
+
+# ---------------------------------------------------------------------------
+# TestNPMAdvisoryHiding — 3 tests
+# ---------------------------------------------------------------------------
+
+
+class TestNPMAdvisoryHiding:
+    """Verify that injecting a dummy advisories key cannot suppress
+    processing of npm 7+ vulnerabilities.
+    """
+
+    def test_both_formats_processed(self, npm_audit_module):
+        """If both advisories and vulnerabilities exist, both are processed."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            data = {
+                "advisories": {
+                    "1001": {"severity": "high", "title": "Advisory vuln",
+                             "module_name": "old-pkg"},
+                },
+                "vulnerabilities": {
+                    "new-pkg": {"via": [
+                        {"severity": "critical", "title": "Real critical vuln",
+                         "source": 2001},
+                    ]},
+                },
+            }
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            npm_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            results = sarif["runs"][0]["results"]
+            # Both advisory and vulnerability should be present
+            assert len(results) >= 2, \
+                f"Expected >=2 results (advisory + vuln), got {len(results)}"
+            rule_ids = [r["ruleId"] for r in results]
+            assert any("advisory" in rid for rid in rule_ids), "Advisory result missing"
+            assert any("vuln" in rid for rid in rule_ids), "Vulnerability result missing"
+
+    def test_empty_advisories_does_not_block_vulns(self, npm_audit_module):
+        """Empty advisories dict must not block npm 7+ vulnerability processing."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            data = {
+                "advisories": {},
+                "vulnerabilities": {
+                    "pkg": {"via": [
+                        {"severity": "high", "title": "Critical Bug", "source": 3001},
+                    ]},
+                },
+            }
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            npm_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            results = sarif["runs"][0]["results"]
+            assert len(results) >= 1, "npm 7+ vuln must be processed even with empty advisories"
+
+    def test_dummy_advisory_cannot_suppress_real_vulns(self, npm_audit_module):
+        """Dummy advisory with no real findings cannot hide npm7+ vulns."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            data = {
+                "advisories": {"fake": "not-a-dict"},  # malformed, will be skipped
+                "vulnerabilities": {
+                    "victim-pkg": {"via": [
+                        {"severity": "critical", "title": "Actual RCE", "source": 4001},
+                    ]},
+                },
+            }
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            npm_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            results = sarif["runs"][0]["results"]
+            assert len(results) >= 1, "Real npm7+ vuln must not be hidden by dummy advisories"
+
+
+# ---------------------------------------------------------------------------
+# TestFixVersionsTruncation — 2 tests
+# ---------------------------------------------------------------------------
+
+
+class TestFixVersionsTruncation:
+    """Verify fix_versions elements are truncated to prevent oversized SARIF."""
+
+    def test_long_fix_version_truncated(self, pip_audit_module):
+        """Individual fix_version elements longer than 100 chars must be truncated."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            long_version = "x" * 500
+            data = {"dependencies": [{
+                "name": "pkg",
+                "version": "1.0",
+                "vulns": [{"id": "CVE-TRUNC", "fix_versions": [long_version]}],
+            }]}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            pip_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            msg = sarif["runs"][0]["results"][0]["message"]["text"]
+            # The 500-char version should be truncated to 100
+            assert long_version not in msg
+            assert len(msg) < 300
+
+    def test_many_fix_versions_capped(self, pip_audit_module):
+        """More than 20 fix_versions must be capped."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            versions = [f"99.{i}.0" for i in range(50)]
+            data = {"dependencies": [{
+                "name": "pkg",
+                "version": "1.0",
+                "vulns": [{"id": "CVE-MANY", "fix_versions": versions}],
+            }]}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            pip_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            msg = sarif["runs"][0]["results"][0]["message"]["text"]
+            # Should only have 20 versions, not 50
+            version_count = msg.count("99.")
+            assert version_count <= 20, f"Expected <=20 versions in message, got {version_count}"

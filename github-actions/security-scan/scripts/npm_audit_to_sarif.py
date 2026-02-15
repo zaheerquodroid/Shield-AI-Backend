@@ -8,7 +8,6 @@ Usage:
 """
 
 import json
-import os
 import sys
 
 MAX_INPUT_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -40,13 +39,14 @@ def convert(input_path: str, output_path: str) -> None:
         output_path: Path to write SARIF file.
     """
     try:
-        file_size = os.path.getsize(input_path)
-        if file_size > MAX_INPUT_SIZE:
+        # Size-limited read to prevent TOCTOU race (stat then open)
+        with open(input_path) as f:
+            raw = f.read(MAX_INPUT_SIZE + 1)
+        if len(raw) > MAX_INPUT_SIZE:
             print(f"::warning::npm audit input exceeds {MAX_INPUT_SIZE} bytes, skipping", file=sys.stderr)
             data = {}
         else:
-            with open(input_path) as f:
-                data = json.load(f)
+            data = json.loads(raw)
     except (json.JSONDecodeError, OSError, FileNotFoundError):
         data = {}
 
@@ -69,7 +69,7 @@ def convert(input_path: str, output_path: str) -> None:
 
     # npm 7+ format: { "vulnerabilities": { "package-name": {...}, ... } }
     vulnerabilities = data.get("vulnerabilities", {})
-    if isinstance(vulnerabilities, dict) and not advisories:
+    if isinstance(vulnerabilities, dict):
         for pkg_name, vuln in vulnerabilities.items():
             if len(results) >= MAX_RESULTS:
                 break

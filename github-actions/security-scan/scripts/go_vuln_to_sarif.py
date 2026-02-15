@@ -9,7 +9,6 @@ Usage:
 """
 
 import json
-import os
 import sys
 
 MAX_INPUT_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -28,18 +27,17 @@ def convert(input_path: str, output_path: str) -> None:
     rule_ids = set()
 
     try:
-        file_size = os.path.getsize(input_path)
-        if file_size > MAX_INPUT_SIZE:
+        # Size-limited read to prevent TOCTOU race and 2x memory from read+split
+        with open(input_path) as f:
+            content = f.read(MAX_INPUT_SIZE + 1)
+        if len(content) > MAX_INPUT_SIZE:
             print(f"::warning::govulncheck input exceeds {MAX_INPUT_SIZE} bytes, skipping", file=sys.stderr)
             content = ""
-        else:
-            with open(input_path) as f:
-                content = f.read()
     except (OSError, FileNotFoundError):
         content = ""
 
     # govulncheck outputs newline-delimited JSON objects
-    for line in content.strip().split("\n"):
+    for line in content.split("\n"):
         if len(results) >= MAX_RESULTS:
             break
         line = line.strip()
