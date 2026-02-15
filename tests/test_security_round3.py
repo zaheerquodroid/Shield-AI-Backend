@@ -124,12 +124,13 @@ class TestDNSFailureBehavior:
             result = validate_origin_url("http://origin.internal:3000")
         assert result is None
 
-    def test_webhook_validation_uses_strict_dns(self):
+    @pytest.mark.asyncio
+    async def test_webhook_validation_uses_strict_dns(self):
         """_validate_webhook_url uses strict_dns=True internally."""
         import socket
         with patch("proxy.middleware.url_validator.socket.getaddrinfo",
                     side_effect=socket.gaierror("DNS failed")):
-            result = _validate_webhook_url("http://attacker-dns-rebind.com/hook")
+            result = await _validate_webhook_url("http://attacker-dns-rebind.com/hook")
         assert result is not None
         assert "DNS" in result
 
@@ -673,7 +674,7 @@ class TestWebhookResponseStatusLogging:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client, \
              patch("proxy.config.webhook.logger") as mock_logger:
             mock_client = AsyncMock()
@@ -700,7 +701,7 @@ class TestWebhookResponseStatusLogging:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client, \
              patch("proxy.config.webhook.logger") as mock_logger:
             mock_client = AsyncMock()

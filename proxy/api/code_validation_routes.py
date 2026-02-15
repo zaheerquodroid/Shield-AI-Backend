@@ -20,6 +20,13 @@ logger = structlog.get_logger()
 # Module-level default validator (stateless, thread-safe)
 _default_validator = CodeValidator()
 
+# Imports that must NEVER be allowed, even if caller tries to whitelist them.
+# These modules provide direct system access that cannot be sandboxed.
+_NEVER_ALLOWED_IMPORTS = frozenset({
+    "os", "subprocess", "ctypes", "pty", "pickle", "marshal",
+    "shelve", "yaml", "jsonpickle", "runpy",
+})
+
 # Severity ranking for max_severity log (lexicographic would be wrong)
 _SEVERITY_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
 
@@ -40,8 +47,14 @@ async def validate_code(body: CodeValidationRequest):
             body.config.allowed_imports
             or body.config.blocked_imports
         ):
+            # Strip never-allowed imports from caller-supplied allowed_imports
+            safe_allowed = (
+                set(body.config.allowed_imports) - _NEVER_ALLOWED_IMPORTS
+                if body.config.allowed_imports
+                else None
+            )
             validator = CodeValidator(
-                allowed_imports=set(body.config.allowed_imports) if body.config.allowed_imports else None,
+                allowed_imports=safe_allowed,
                 blocked_imports=set(body.config.blocked_imports) if body.config.blocked_imports else None,
             )
         else:

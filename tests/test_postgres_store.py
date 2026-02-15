@@ -120,9 +120,17 @@ class TestColumnWhitelist:
             await pg_store.update_app(uuid4(), **{"1=1; --": "evil"})
 
     @pytest.mark.asyncio
-    async def test_update_app_rejects_customer_id(self):
-        with pytest.raises(ValueError, match="Invalid column name"):
-            await pg_store.update_app(uuid4(), customer_id=uuid4())
+    async def test_update_app_customer_id_is_scope_not_column(self):
+        """customer_id is a scoping param, not an update column — no ValueError."""
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(return_value=None)
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        pg_store._pool.acquire = MagicMock(return_value=mock_ctx)
+        # customer_id scopes the WHERE clause, does not go into SET
+        result = await pg_store.update_app(uuid4(), customer_id=uuid4(), name="ok")
+        assert result is None  # No matching row
 
     @pytest.mark.asyncio
     async def test_update_customer_allows_valid_columns(self):
@@ -172,7 +180,7 @@ class TestUpdateNoChanges:
         aid = uuid4()
         with patch.object(pg_store, "get_app", new_callable=AsyncMock, return_value={"id": aid}) as mock_get:
             result = await pg_store.update_app(aid)
-        mock_get.assert_awaited_once_with(aid)
+        mock_get.assert_awaited_once_with(aid, customer_id=None)
 
 
 class TestInitPostgres:

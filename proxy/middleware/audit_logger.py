@@ -68,6 +68,7 @@ class AuditLogger(Middleware):
         self._pending_webhooks: deque[asyncio.Task] = deque(maxlen=_MAX_PENDING_WEBHOOK_TASKS)
         self._shutdown = False
         self._consecutive_failures = 0
+        self._entries_dropped: int = 0
 
     async def start(self) -> None:
         """Start the background flush loop."""
@@ -109,6 +110,8 @@ class AuditLogger(Middleware):
             try:
                 await batch_insert_audit_logs(rows)
                 self._consecutive_failures = 0  # Reset on success
+                if self._entries_dropped > 0:
+                    self._entries_dropped = 0
             except Exception:
                 self._consecutive_failures += 1
                 logger.exception(
@@ -150,6 +153,7 @@ class AuditLogger(Middleware):
 
         # Always capture request metadata (needed for both audit and webhooks)
         context.extra["_audit_start"] = time.monotonic()
+        context.extra["_audit_timestamp"] = datetime.now(timezone.utc)
         context.extra["_audit_method"] = request.method
         context.extra["_audit_path"] = _sanitize(
             request.url.path, _MAX_PATH_LENGTH
@@ -214,7 +218,7 @@ class AuditLogger(Middleware):
                 context.tenant_id,
                 app_id,
                 request_id,
-                datetime.now(timezone.utc),
+                context.extra.get("_audit_timestamp", datetime.now(timezone.utc)),
                 method,
                 path,
                 status_code,
@@ -229,13 +233,15 @@ class AuditLogger(Middleware):
             try:
                 self._queue.put_nowait(row)
             except asyncio.QueueFull:
-                logger.warning(
-                    "audit_queue_full",
-                    dropped=True,
-                    queue_size=self._queue.maxsize,
-                    tenant_id=context.tenant_id,
-                    request_id=context.request_id,
-                )
+                self._entries_dropped += 1
+                if self._entries_dropped == 1 or self._entries_dropped % 100 == 0:
+                    logger.error(
+                        "audit_queue_full",
+                        total_dropped=self._entries_dropped,
+                        queue_size=self._queue.maxsize,
+                        tenant_id=context.tenant_id,
+                        request_id=context.request_id,
+                    )
 
         # Dispatch webhook for security events (independent of audit_logging flag).
         # Uses a SEPARATE bounded queue so slow webhooks cannot evict audit tasks.

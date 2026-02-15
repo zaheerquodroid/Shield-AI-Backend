@@ -300,6 +300,7 @@ class TestAC3_CustomerCustomization:
         from proxy.main import app
 
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": str(aid), "settings": {"rate_limits": {"auth_max": 50}}}
         mock_updated = {**mock_app, "settings": {"rate_limits": {"auth_max": 50}, "header_preset": "strict"}}
 
@@ -310,7 +311,7 @@ class TestAC3_CustomerCustomization:
                 patch("proxy.api.config_routes.pg_store.update_app", mock_update),
             ):
                 resp = c.put(
-                    f"/api/config/apps/{aid}/headers",
+                    f"/api/config/customers/{cid}/apps/{aid}/headers",
                     json={"header_preset": "strict"},
                     headers={"Authorization": "Bearer test-api-key"},
                 )
@@ -330,12 +331,13 @@ class TestAC3_CustomerCustomization:
         from proxy.main import app
 
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": str(aid), "settings": {}}
 
         with TestClient(app, raise_server_exceptions=False) as c:
             with patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=mock_app):
                 resp = c.put(
-                    f"/api/config/apps/{aid}/headers",
+                    f"/api/config/customers/{cid}/apps/{aid}/headers",
                     json={"header_preset": "invalid_preset"},
                     headers={"Authorization": "Bearer test-api-key"},
                 )

@@ -57,7 +57,8 @@ def validate_tenant_id(tenant_id: str) -> str:
     if not normalised:
         raise ValueError("tenant_id must not be empty")
     if not _UUID_RE.match(normalised):
-        raise ValueError(f"tenant_id is not a valid UUID: {tenant_id!r}")
+        safe_id = tenant_id[:50].encode("ascii", "replace").decode()
+        raise ValueError(f"tenant_id is not a valid UUID: {safe_id!r}")
     return normalised
 
 

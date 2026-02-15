@@ -33,6 +33,7 @@ async def init_redis(url: str, pool_size: int = 10) -> aioredis.Redis:
                 max_connections=pool_size,
                 decode_responses=True,
                 socket_connect_timeout=5,
+                socket_timeout=5,
             )
             await _pool.ping()
             logger.info("redis_connected", url=_redact_url(url), pool_size=pool_size)

@@ -54,6 +54,18 @@ def set_cloudfront_client(client: Any) -> None:
     _cloudfront_client = client
 
 
+def _safe_cert_id(arn: str) -> str:
+    """Extract only the certificate UUID from an ACM ARN for safe logging.
+
+    Full ARNs contain AWS account IDs — only log the cert's unique suffix.
+    """
+    if not arn:
+        return ""
+    # ARN format: arn:aws:acm:region:account:certificate/uuid
+    parts = arn.rsplit("/", 1)
+    return parts[-1] if len(parts) == 2 else arn[:8] + "..."
+
+
 def _build_status_response(record: dict) -> OnboardingStatusResponse:
     """Build a status response with required actions and next steps."""
     status = record.get("status", "")
@@ -156,7 +168,7 @@ async def _request_acm_certificate(domain: str) -> dict[str, str]:
             lambda: _acm_client.describe_certificate(CertificateArn=cert_arn),
         )
     except Exception:
-        logger.error("acm_describe_failed", cert_arn=cert_arn)
+        logger.error("acm_describe_failed", cert_id=_safe_cert_id(cert_arn))
         raise HTTPException(
             status_code=502,
             detail="Failed to retrieve certificate validation details",
@@ -193,9 +205,9 @@ async def _cleanup_acm_certificate(cert_arn: str) -> None:
             None,
             lambda: _acm_client.delete_certificate(CertificateArn=cert_arn),
         )
-        logger.info("acm_orphan_cleaned", cert_arn=cert_arn)
+        logger.info("acm_orphan_cleaned", cert_id=_safe_cert_id(cert_arn))
     except Exception:
-        logger.error("acm_orphan_cleanup_failed", cert_arn=cert_arn)
+        logger.error("acm_orphan_cleanup_failed", cert_id=_safe_cert_id(cert_arn))
 
 
 @router.post("/customers/{customer_id}/", status_code=201, response_model=OnboardingResponse)
@@ -227,7 +239,7 @@ async def create_onboarding(customer_id: UUID, body: OnboardingCreate):
     if existing is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Domain {body.customer_domain} already has an active onboarding",
+            detail="Domain already has an active onboarding",
         )
 
     # Check per-customer onboarding limit
@@ -260,7 +272,7 @@ async def create_onboarding(customer_id: UUID, body: OnboardingCreate):
         await _cleanup_acm_certificate(acm_result["certificate_arn"])
         raise HTTPException(
             status_code=409,
-            detail=f"Domain {body.customer_domain} already has an active onboarding",
+            detail="Domain already has an active onboarding",
         )
     except StoreUnavailable:
         # DB failed — clean up orphaned ACM certificate
@@ -367,11 +379,11 @@ async def delete_onboarding(customer_id: UUID, onboarding_id: UUID):
                 None,
                 lambda: _acm_client.delete_certificate(CertificateArn=cert_arn),
             )
-            logger.info("onboarding_cert_deleted", cert_arn=cert_arn)
+            logger.info("onboarding_cert_deleted", cert_id=_safe_cert_id(cert_arn))
         except Exception:
             logger.error(
                 "onboarding_cert_delete_failed",
-                cert_arn=cert_arn,
+                cert_id=_safe_cert_id(cert_arn),
                 onboarding_id=str(onboarding_id),
             )
             cleanup_errors.append("ACM certificate deletion failed")

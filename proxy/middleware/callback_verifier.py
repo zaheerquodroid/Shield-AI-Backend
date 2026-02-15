@@ -150,8 +150,9 @@ class CallbackVerifier(Middleware):
         # Read request body (Starlette caches, safe for later middleware)
         body = await request.body()
 
-        # Try each secret (supports rotation)
+        # Try each secret (supports rotation) — iterate ALL for constant-time
         signing_input = f"{ts_value}.".encode() + body
+        matched = False
         for secret in secrets:
             expected = "sha256=" + hmac.new(
                 secret.encode("utf-8"),
@@ -159,13 +160,17 @@ class CallbackVerifier(Middleware):
                 hashlib.sha256,
             ).hexdigest()
             if hmac.compare_digest(expected, signature):
-                logger.info(
-                    "callback_signature_valid",
-                    request_id=context.request_id,
-                    tenant_id=context.tenant_id,
-                    path=path,
-                )
-                return None  # Valid — continue pipeline
+                matched = True
+            # Do NOT break — iterate all secrets for constant-time behavior
+
+        if matched:
+            logger.info(
+                "callback_signature_valid",
+                request_id=context.request_id,
+                tenant_id=context.tenant_id,
+                path=path,
+            )
+            return None  # Valid — continue pipeline
 
         # No secret matched
         return self._reject(

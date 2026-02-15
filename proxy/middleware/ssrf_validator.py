@@ -40,27 +40,6 @@ _URL_RE = re.compile(
 )
 
 
-def _check_duplicate_keys(raw_body: bytes) -> bool:
-    """Detect duplicate JSON keys using object_pairs_hook.
-
-    Returns True if duplicates found.
-    """
-    try:
-        has_dupes = False
-
-        def _pairs_hook(pairs: list[tuple[str, object]]) -> dict:
-            nonlocal has_dupes
-            keys = [k for k, _ in pairs]
-            if len(keys) != len(set(keys)):
-                has_dupes = True
-            return dict(pairs)
-
-        json.loads(raw_body, object_pairs_hook=_pairs_hook)
-        return has_dupes
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return False
-
-
 class SSRFValidator(Middleware):
     """Validate URL-valued fields in request bodies to prevent SSRF attacks.
 

@@ -61,8 +61,8 @@ async def update_customer(customer_id: UUID, body: CustomerUpdate):
         result = await pg_store.update_customer(customer_id, **fields)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid field in request body")
     if result is None:
         raise HTTPException(status_code=404, detail="Customer not found")
     return result
@@ -110,11 +110,11 @@ async def create_app(customer_id: UUID, body: AppCreate):
     return result
 
 
-@router.get("/apps/{app_id}")
-async def get_app(app_id: UUID):
-    """Get an app by ID."""
+@router.get("/customers/{customer_id}/apps/{app_id}")
+async def get_app(customer_id: UUID, app_id: UUID):
+    """Get an app by ID, scoped to customer (prevents IDOR)."""
     try:
-        result = await pg_store.get_app(app_id)
+        result = await pg_store.get_app(app_id, customer_id=customer_id)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
     if result is None:
@@ -122,9 +122,9 @@ async def get_app(app_id: UUID):
     return result
 
 
-@router.put("/apps/{app_id}")
-async def update_app(app_id: UUID, body: AppUpdate):
-    """Update an app."""
+@router.put("/customers/{customer_id}/apps/{app_id}")
+async def update_app(customer_id: UUID, app_id: UUID, body: AppUpdate):
+    """Update an app, scoped to customer (prevents IDOR)."""
     # Validate origin_url against SSRF if provided
     if body.origin_url is not None:
         ssrf_error = validate_origin_url(body.origin_url)
@@ -142,21 +142,21 @@ async def update_app(app_id: UUID, body: AppUpdate):
     if body.settings is not None:
         fields["settings"] = body.settings
     try:
-        result = await pg_store.update_app(app_id, **fields)
+        result = await pg_store.update_app(app_id, customer_id=customer_id, **fields)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail="Invalid field in request body")
     if result is None:
         raise HTTPException(status_code=404, detail="App not found")
     return result
 
 
-@router.delete("/apps/{app_id}", status_code=204)
-async def delete_app(app_id: UUID):
-    """Delete an app."""
+@router.delete("/customers/{customer_id}/apps/{app_id}", status_code=204)
+async def delete_app(customer_id: UUID, app_id: UUID):
+    """Delete an app, scoped to customer (prevents IDOR)."""
     try:
-        deleted = await pg_store.delete_app(app_id)
+        deleted = await pg_store.delete_app(app_id, customer_id=customer_id)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
     if not deleted:
@@ -181,11 +181,11 @@ class HeaderSettingsUpdate(BaseModel):
     csp_override: str | None = None
 
 
-@router.put("/apps/{app_id}/rate-limits")
-async def update_rate_limits(app_id: UUID, body: RateLimitUpdate):
+@router.put("/customers/{customer_id}/apps/{app_id}/rate-limits")
+async def update_rate_limits(customer_id: UUID, app_id: UUID, body: RateLimitUpdate):
     """Update per-app rate limit settings."""
     try:
-        app_data = await pg_store.get_app(app_id)
+        app_data = await pg_store.get_app(app_id, customer_id=customer_id)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
     if app_data is None:
@@ -198,7 +198,7 @@ async def update_rate_limits(app_id: UUID, body: RateLimitUpdate):
     settings["rate_limits"] = rate_limits
 
     try:
-        result = await pg_store.update_app(app_id, settings=settings)
+        result = await pg_store.update_app(app_id, customer_id=customer_id, settings=settings)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
     if result is None:
@@ -206,11 +206,11 @@ async def update_rate_limits(app_id: UUID, body: RateLimitUpdate):
     return result
 
 
-@router.put("/apps/{app_id}/headers")
-async def update_header_settings(app_id: UUID, body: HeaderSettingsUpdate):
+@router.put("/customers/{customer_id}/apps/{app_id}/headers")
+async def update_header_settings(customer_id: UUID, app_id: UUID, body: HeaderSettingsUpdate):
     """Update per-app security header settings."""
     try:
-        app_data = await pg_store.get_app(app_id)
+        app_data = await pg_store.get_app(app_id, customer_id=customer_id)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
     if app_data is None:
@@ -221,7 +221,7 @@ async def update_header_settings(app_id: UUID, body: HeaderSettingsUpdate):
     settings.update(updates)
 
     try:
-        result = await pg_store.update_app(app_id, settings=settings)
+        result = await pg_store.update_app(app_id, customer_id=customer_id, settings=settings)
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
     if result is None:

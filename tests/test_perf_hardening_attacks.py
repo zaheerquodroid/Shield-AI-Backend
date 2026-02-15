@@ -697,13 +697,13 @@ class TestAuditQueueAttacks:
             await logger.process_request(req, ctx)
             await logger.process_response(response, ctx)
 
-        # Warning should include context for incident response
-        warning_calls = [
-            c for c in mock_log.warning.call_args_list
+        # Error should include context for incident response
+        error_calls = [
+            c for c in mock_log.error.call_args_list
             if c[0][0] == "audit_queue_full"
         ]
-        assert len(warning_calls) >= 1
-        kwargs = warning_calls[0][1]
+        assert len(error_calls) >= 1
+        kwargs = error_calls[0][1]
         assert "tenant_id" in kwargs
         assert "request_id" in kwargs
 

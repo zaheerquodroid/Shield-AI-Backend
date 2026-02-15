@@ -112,7 +112,7 @@ async def get_audit_logs(
             offset=offset,
         )
     except Exception:
-        logger.exception("audit_query_failed", tenant_id=tenant_id)
+        logger.error("audit_query_failed", tenant_id=tenant_id)
         raise HTTPException(status_code=503, detail="Audit log query failed")
 
     if format == "csv":

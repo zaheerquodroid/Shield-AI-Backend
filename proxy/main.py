@@ -190,6 +190,18 @@ HOP_BY_HOP_HEADERS = frozenset({
 })
 
 
+async def _error_response(content: str, status_code: int, context: RequestContext) -> Response:
+    """Build an error Response and run it through the response pipeline.
+
+    Ensures error responses get security headers, audit logging, and
+    response sanitization — same as successful upstream responses.
+    """
+    resp = Response(content=content, status_code=status_code)
+    if _pipeline:
+        resp = await _pipeline.process_response(resp, context)
+    return resp
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 async def proxy_request(request: Request, path: str) -> Response:
     """Catch-all reverse proxy handler."""
@@ -200,13 +212,15 @@ async def proxy_request(request: Request, path: str) -> Response:
     context = RequestContext()
 
     # Run request through middleware pipeline
-    if _pipeline:
-        short_circuit = await _pipeline.process_request(request, context)
-        if short_circuit is not None:
-            # Short-circuit responses still need response pipeline
-            # (security headers, audit logging, response sanitization)
-            short_circuit = await _pipeline.process_response(short_circuit, context)
-            return short_circuit
+    if _pipeline is None:
+        return Response(content="Security pipeline not initialized", status_code=503)
+
+    short_circuit = await _pipeline.process_request(request, context)
+    if short_circuit is not None:
+        # Short-circuit responses still need response pipeline
+        # (security headers, audit logging, response sanitization)
+        short_circuit = await _pipeline.process_response(short_circuit, context)
+        return short_circuit
 
     # Determine upstream URL — use customer config if available, else default
     upstream_base = context.customer_config.get("origin_url", settings.upstream_url)
@@ -236,12 +250,12 @@ async def proxy_request(request: Request, path: str) -> Response:
     if content_length:
         try:
             if int(content_length) > settings.max_body_bytes:
-                return Response(content="Request body too large", status_code=413)
+                return await _error_response("Request body too large", 413, context)
         except (ValueError, OverflowError):
-            return Response(content="Invalid Content-Length", status_code=400)
+            return await _error_response("Invalid Content-Length", 400, context)
     body = await request.body()
     if len(body) > settings.max_body_bytes:
-        return Response(content="Request body too large", status_code=413)
+        return await _error_response("Request body too large", 413, context)
 
     # Use modified body if middleware (e.g. LLM sanitizer) rewrote it
     upstream_body = context.extra.get("modified_body", body)
@@ -265,13 +279,13 @@ async def proxy_request(request: Request, path: str) -> Response:
         )
     except httpx.TimeoutException:
         logger.error("upstream_timeout", url=upstream_url, request_id=context.request_id)
-        return Response(content="Upstream timeout", status_code=504)
+        return await _error_response("Upstream timeout", 504, context)
     except httpx.ConnectError:
         logger.error("upstream_connect_error", url=upstream_url, request_id=context.request_id)
-        return Response(content="Upstream unreachable", status_code=502)
+        return await _error_response("Upstream unreachable", 502, context)
     except httpx.HTTPError as exc:
         logger.error("upstream_error", url=upstream_url, request_id=context.request_id, error=str(exc))
-        return Response(content="Upstream error", status_code=502)
+        return await _error_response("Upstream error", 502, context)
 
     # Check response body size — prevent OOM from malicious/compromised upstream
     resp_content_length = upstream_resp.headers.get("content-length")
@@ -284,7 +298,7 @@ async def proxy_request(request: Request, path: str) -> Response:
                     max=settings.max_body_bytes,
                     request_id=context.request_id,
                 )
-                return Response(content="Upstream response too large", status_code=502)
+                return await _error_response("Upstream response too large", 502, context)
         except (ValueError, OverflowError):
             pass
     # Also check actual content size (Content-Length may be missing or wrong)
@@ -295,7 +309,7 @@ async def proxy_request(request: Request, path: str) -> Response:
             max=settings.max_body_bytes,
             request_id=context.request_id,
         )
-        return Response(content="Upstream response too large", status_code=502)
+        return await _error_response("Upstream response too large", 502, context)
 
     # Build response headers — filter hop-by-hop
     response_headers = {}
@@ -313,7 +327,6 @@ async def proxy_request(request: Request, path: str) -> Response:
     )
 
     # Run response through middleware pipeline (reverse order)
-    if _pipeline:
-        response = await _pipeline.process_response(response, context)
+    response = await _pipeline.process_response(response, context)
 
     return response

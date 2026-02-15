@@ -110,8 +110,9 @@ class TestAC1_PostgreSQLStorage:
         assert resp.json()["enabled_features"]["rate_limiting"] is False
 
     def test_update_app_settings_json(self, api_client):
-        """PUT /api/config/apps/{id} updates settings JSONB."""
+        """PUT /api/config/customers/{cid}/apps/{id} updates settings JSONB."""
         aid = uuid4()
+        cid = uuid4()
         mock_result = {"id": str(aid), "settings": {"rate_limits": {"auth_max": 100}}}
         with patch(
             "proxy.api.config_routes.pg_store.update_app",
@@ -119,7 +120,7 @@ class TestAC1_PostgreSQLStorage:
             return_value=mock_result,
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}",
+                f"/api/config/customers/{cid}/apps/{aid}",
                 json={"settings": {"rate_limits": {"auth_max": 100}}},
                 headers=_AUTH,
             )

@@ -289,6 +289,18 @@ class PythonValidator:
                             col=getattr(node, "col_offset", 0),
                             snippet=_snippet(node),
                         ))
+                elif not isinstance(second_arg, ast.Constant):
+                    # Non-constant second arg (BinOp, Call, variable, etc.)
+                    # means the attribute name is computed at runtime — flag it
+                    findings.append(Finding(
+                        rule_id="py-getattr-dynamic-attr",
+                        category=RuleCategory.introspection,
+                        severity=Severity.high,
+                        message="getattr with dynamic (non-constant) attribute name",
+                        line=getattr(node, "lineno", 0),
+                        col=getattr(node, "col_offset", 0),
+                        snippet=_snippet(node),
+                    ))
 
         # Code object construction: types.CodeType(), types.FunctionType()
         if isinstance(func, ast.Attribute):

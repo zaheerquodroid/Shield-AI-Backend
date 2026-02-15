@@ -136,8 +136,8 @@ async def update_webhook(customer_id: UUID, webhook_id: UUID, body: WebhookUpdat
         )
     except StoreUnavailable:
         raise HTTPException(status_code=503, detail="Database unavailable")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid field in request body")
     if result is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
     return result

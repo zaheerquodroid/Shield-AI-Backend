@@ -57,9 +57,10 @@ class TestSSRFProtection:
         "http://[fc00::1]/ipv6-private",
         "http://[fe80::1]/ipv6-link-local",
     ])
-    def test_private_and_reserved_ips_blocked(self, url):
+    @pytest.mark.asyncio
+    async def test_private_and_reserved_ips_blocked(self, url):
         """Private/reserved IP addresses in webhook URLs are blocked."""
-        result = _validate_webhook_url(url)
+        result = await _validate_webhook_url(url)
         assert result is not None, f"Expected {url} to be blocked"
 
     @pytest.mark.parametrize("url", [
@@ -68,32 +69,37 @@ class TestSSRFProtection:
         "https://webhook.example.com/callback",
         "http://api.example.com/webhook",
     ])
-    def test_public_urls_allowed(self, url):
+    @pytest.mark.asyncio
+    async def test_public_urls_allowed(self, url):
         """Public URLs are allowed for webhook targets (with mocked DNS for test stability)."""
         # Mock DNS to return a public IP since test env may not resolve these domains
         with patch("proxy.middleware.url_validator.socket.getaddrinfo",
                     return_value=[(2, 1, 0, '', ('93.184.216.34', 0))]):
-            result = _validate_webhook_url(url)
+            result = await _validate_webhook_url(url)
         assert result is None, f"Expected {url} to be allowed, got: {result}"
 
-    def test_ftp_scheme_blocked(self):
+    @pytest.mark.asyncio
+    async def test_ftp_scheme_blocked(self):
         """Non-HTTP schemes like ftp are blocked."""
-        result = _validate_webhook_url("ftp://example.com/webhook")
+        result = await _validate_webhook_url("ftp://example.com/webhook")
         assert result is not None
 
-    def test_file_scheme_blocked(self):
+    @pytest.mark.asyncio
+    async def test_file_scheme_blocked(self):
         """file:// scheme is blocked."""
-        result = _validate_webhook_url("file:///etc/passwd")
+        result = await _validate_webhook_url("file:///etc/passwd")
         assert result is not None
 
-    def test_no_scheme_blocked(self):
+    @pytest.mark.asyncio
+    async def test_no_scheme_blocked(self):
         """URL without scheme is blocked."""
-        result = _validate_webhook_url("example.com/webhook")
+        result = await _validate_webhook_url("example.com/webhook")
         assert result is not None
 
-    def test_empty_url_blocked(self):
+    @pytest.mark.asyncio
+    async def test_empty_url_blocked(self):
         """Empty URL is blocked."""
-        result = _validate_webhook_url("")
+        result = await _validate_webhook_url("")
         assert result is not None
 
     @pytest.mark.asyncio
@@ -171,7 +177,7 @@ class TestHMACSignature:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
@@ -310,7 +316,7 @@ class TestErrorResilience:
 
         # Context with non-serializable object — json.dumps(default=str) handles this
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
@@ -335,7 +341,7 @@ class TestErrorResilience:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
@@ -367,7 +373,7 @@ class TestErrorResilience:
             return MagicMock(status_code=200)
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = mock_post
@@ -536,7 +542,7 @@ class TestSlackMentionInjection:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))

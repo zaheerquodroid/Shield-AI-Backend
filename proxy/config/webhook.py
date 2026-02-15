@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -173,14 +174,17 @@ def _format_pagerduty_payload(
     }
 
 
-def _validate_webhook_url(url: str) -> str | None:
+async def _validate_webhook_url(url: str) -> str | None:
     """Validate webhook URL against SSRF. Returns error message or None.
 
     Uses strict_dns=True so DNS resolution failure blocks the URL (fail-closed).
     This prevents DNS rebinding attacks where the attacker's DNS server
     intermittently fails to avoid validation.
+
+    Runs in a thread pool to avoid blocking the event loop with synchronous
+    DNS resolution.
     """
-    return validate_origin_url(url, strict_dns=True)
+    return await asyncio.to_thread(validate_origin_url, url, strict_dns=True)
 
 
 async def dispatch_webhook_event(
@@ -212,7 +216,7 @@ async def dispatch_webhook_event(
             url = wh["url"]
 
             # SSRF check on every dispatch (URL could have been modified)
-            ssrf_error = _validate_webhook_url(url)
+            ssrf_error = await _validate_webhook_url(url)
             if ssrf_error:
                 logger.warning(
                     "webhook_ssrf_blocked",
@@ -254,7 +258,7 @@ async def dispatch_webhook_event(
                 )
 
         except Exception:
-            logger.exception(
+            logger.error(
                 "webhook_dispatch_failed",
                 webhook_id=str(wh.get("id", "")),
             )

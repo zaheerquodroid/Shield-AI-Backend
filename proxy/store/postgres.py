@@ -41,7 +41,7 @@ async def init_postgres(url: str, min_size: int = 2, max_size: int = 10):
         logger.warning("asyncpg_not_installed")
         return None
     try:
-        _pool = await asyncpg.create_pool(url, min_size=min_size, max_size=max_size)
+        _pool = await asyncpg.create_pool(url, min_size=min_size, max_size=max_size, command_timeout=30)
         # Warmup: ensure min_size connections are actually established
         warmup_conns = []
         for _ in range(min_size):
@@ -187,15 +187,21 @@ async def create_app(customer_id: UUID, name: str, origin_url: str, domain: str,
         return dict(row) if row else None
 
 
-async def get_app(app_id: UUID) -> dict[str, Any] | None:
-    """Fetch an app by ID."""
+async def get_app(app_id: UUID, *, customer_id: UUID | None = None) -> dict[str, Any] | None:
+    """Fetch an app by ID, optionally scoped to a customer."""
     if _pool is None:
         raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT id, customer_id, name, origin_url, domain, enabled_features, settings, created_at, updated_at FROM apps WHERE id = $1",
-            app_id,
-        )
+        if customer_id is not None:
+            row = await conn.fetchrow(
+                "SELECT id, customer_id, name, origin_url, domain, enabled_features, settings, created_at, updated_at FROM apps WHERE id = $1 AND customer_id = $2",
+                app_id, customer_id,
+            )
+        else:
+            row = await conn.fetchrow(
+                "SELECT id, customer_id, name, origin_url, domain, enabled_features, settings, created_at, updated_at FROM apps WHERE id = $1",
+                app_id,
+            )
         return dict(row) if row else None
 
 
@@ -210,8 +216,12 @@ async def get_all_apps() -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
-async def update_app(app_id: UUID, **fields) -> dict[str, Any] | None:
-    """Update an app. Only non-None, whitelisted fields are updated."""
+async def update_app(app_id: UUID, *, customer_id: UUID | None = None, **fields) -> dict[str, Any] | None:
+    """Update an app. Only non-None, whitelisted fields are updated.
+
+    When *customer_id* is provided, the update is scoped to that customer
+    (prevents IDOR).
+    """
     if _pool is None:
         raise StoreUnavailable("Database connection pool not initialized")
     set_clauses = []
@@ -225,21 +235,32 @@ async def update_app(app_id: UUID, **fields) -> dict[str, Any] | None:
             values.append(val)
             idx += 1
     if not set_clauses:
-        return await get_app(app_id)
+        return await get_app(app_id, customer_id=customer_id)
     set_clauses.append("updated_at = now()")
     values.append(app_id)
-    sql = f"UPDATE apps SET {', '.join(set_clauses)} WHERE id = ${idx} RETURNING id, customer_id, name, origin_url, domain, enabled_features, settings, created_at, updated_at"
+    where = f"WHERE id = ${idx}"
+    if customer_id is not None:
+        idx += 1
+        values.append(customer_id)
+        where += f" AND customer_id = ${idx}"
+    sql = f"UPDATE apps SET {', '.join(set_clauses)} {where} RETURNING id, customer_id, name, origin_url, domain, enabled_features, settings, created_at, updated_at"
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(sql, *values)
         return dict(row) if row else None
 
 
-async def delete_app(app_id: UUID) -> bool:
-    """Delete an app by ID."""
+async def delete_app(app_id: UUID, *, customer_id: UUID | None = None) -> bool:
+    """Delete an app by ID, optionally scoped to a customer."""
     if _pool is None:
         raise StoreUnavailable("Database connection pool not initialized")
     async with _pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM apps WHERE id = $1", app_id)
+        if customer_id is not None:
+            result = await conn.execute(
+                "DELETE FROM apps WHERE id = $1 AND customer_id = $2",
+                app_id, customer_id,
+            )
+        else:
+            result = await conn.execute("DELETE FROM apps WHERE id = $1", app_id)
         return result == "DELETE 1"
 
 

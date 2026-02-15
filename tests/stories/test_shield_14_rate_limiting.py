@@ -328,6 +328,7 @@ class TestAC4_PerCustomerThresholds:
         from proxy.main import app
 
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": str(aid), "settings": {"rate_limits": {"global_max": 500}}}
         mock_updated = {**mock_app, "settings": {"rate_limits": {"global_max": 500, "auth_max": 100}}}
 
@@ -338,7 +339,7 @@ class TestAC4_PerCustomerThresholds:
                 patch("proxy.api.config_routes.pg_store.update_app", mock_update),
             ):
                 resp = c.put(
-                    f"/api/config/apps/{aid}/rate-limits",
+                    f"/api/config/customers/{cid}/apps/{aid}/rate-limits",
                     json={"auth_max": 100},
                     headers={"Authorization": "Bearer test-api-key"},
                 )

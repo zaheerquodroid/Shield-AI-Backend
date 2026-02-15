@@ -20,11 +20,29 @@ from starlette.responses import Response
 
 from proxy.middleware.llm_sanitizer import _extract_string_fields, _MAX_EXTRACT_DEPTH
 from proxy.middleware.pipeline import RequestContext
-from proxy.middleware.ssrf_validator import SSRFValidator, _check_duplicate_keys
+from proxy.middleware.ssrf_validator import SSRFValidator
 from proxy.middleware.url_validator import validate_origin_url
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
+
+def _check_duplicate_keys(raw_body: bytes) -> bool:
+    """Local helper — duplicate key detection (was previously in ssrf_validator)."""
+    try:
+        has_dupes = False
+
+        def _pairs_hook(pairs):
+            nonlocal has_dupes
+            keys = [k for k, _ in pairs]
+            if len(keys) != len(set(keys)):
+                has_dupes = True
+            return dict(pairs)
+
+        json.loads(raw_body, object_pairs_hook=_pairs_hook)
+        return has_dupes
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+
 
 def _make_request(
     path: str = "/api/webhooks",

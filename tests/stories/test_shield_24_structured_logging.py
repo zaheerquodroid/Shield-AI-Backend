@@ -300,7 +300,7 @@ class TestAC4WebhookIntegration:
         mock_response.status_code = 200
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
@@ -358,7 +358,7 @@ class TestAC4WebhookIntegration:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
@@ -461,7 +461,7 @@ class TestAC5WebhookPayloadFormat:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
@@ -487,7 +487,7 @@ class TestAC5WebhookPayloadFormat:
         ]
 
         with patch("proxy.config.webhook.get_enabled_webhooks_for_event", new_callable=AsyncMock, return_value=mock_webhooks), \
-             patch("proxy.config.webhook._validate_webhook_url", return_value=None), \
+             patch("proxy.config.webhook._validate_webhook_url", new_callable=AsyncMock, return_value=None), \
              patch("proxy.config.webhook._get_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
@@ -593,29 +593,34 @@ class TestSecurityEventWebhookIntegration:
 class TestWebhookURLValidation:
     """Webhook URLs validated against SSRF."""
 
-    def test_public_https_url_allowed(self):
+    @pytest.mark.asyncio
+    async def test_public_https_url_allowed(self):
         """Public HTTPS URL passes validation."""
-        assert _validate_webhook_url("https://hooks.slack.com/services/T00/B00/xxx") is None
+        assert await _validate_webhook_url("https://hooks.slack.com/services/T00/B00/xxx") is None
 
-    def test_private_ip_blocked(self):
+    @pytest.mark.asyncio
+    async def test_private_ip_blocked(self):
         """Private IP in webhook URL is blocked."""
-        result = _validate_webhook_url("http://192.168.1.1/webhook")
+        result = await _validate_webhook_url("http://192.168.1.1/webhook")
         assert result is not None
         assert "Blocked" in result or "blocked" in result.lower()
 
-    def test_localhost_blocked(self):
+    @pytest.mark.asyncio
+    async def test_localhost_blocked(self):
         """localhost in webhook URL is blocked."""
-        result = _validate_webhook_url("http://127.0.0.1/webhook")
+        result = await _validate_webhook_url("http://127.0.0.1/webhook")
         assert result is not None
 
-    def test_metadata_endpoint_blocked(self):
+    @pytest.mark.asyncio
+    async def test_metadata_endpoint_blocked(self):
         """AWS metadata endpoint blocked."""
-        result = _validate_webhook_url("http://169.254.169.254/latest/meta-data/")
+        result = await _validate_webhook_url("http://169.254.169.254/latest/meta-data/")
         assert result is not None
 
-    def test_ipv6_loopback_blocked(self):
+    @pytest.mark.asyncio
+    async def test_ipv6_loopback_blocked(self):
         """IPv6 loopback blocked."""
-        result = _validate_webhook_url("http://[::1]/webhook")
+        result = await _validate_webhook_url("http://[::1]/webhook")
         assert result is not None
 
 

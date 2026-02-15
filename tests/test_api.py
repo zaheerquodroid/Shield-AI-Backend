@@ -192,11 +192,12 @@ class TestAppCRUD:
         assert resp.json()["domain"] == "myapp.example.com"
 
     def test_get_app(self, api_client):
-        """GET /apps/{id} returns app."""
+        """GET /customers/{cid}/apps/{id} returns app."""
         app_id = uuid4()
+        cid = uuid4()
         mock_app = {
             "id": app_id,
-            "customer_id": uuid4(),
+            "customer_id": cid,
             "name": "My App",
             "origin_url": "http://myapp:3000",
             "domain": "myapp.example.com",
@@ -207,16 +208,16 @@ class TestAppCRUD:
         }
         with patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=mock_app):
             resp = api_client.get(
-                f"/api/config/apps/{app_id}",
+                f"/api/config/customers/{cid}/apps/{app_id}",
                 headers={"Authorization": "Bearer test-api-key"},
             )
         assert resp.status_code == 200
 
     def test_delete_app(self, api_client):
-        """DELETE /apps/{id} returns 204."""
+        """DELETE /customers/{cid}/apps/{id} returns 204."""
         with patch("proxy.api.config_routes.pg_store.delete_app", new_callable=AsyncMock, return_value=True):
             resp = api_client.delete(
-                f"/api/config/apps/{uuid4()}",
+                f"/api/config/customers/{uuid4()}/apps/{uuid4()}",
                 headers={"Authorization": "Bearer test-api-key"},
             )
         assert resp.status_code == 204
@@ -386,7 +387,7 @@ class TestAppCRUDEdgeCases:
 
     def test_get_app_not_found(self, api_client):
         with patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=None):
-            resp = api_client.get(f"/api/config/apps/{uuid4()}", headers=_AUTH)
+            resp = api_client.get(f"/api/config/customers/{uuid4()}/apps/{uuid4()}", headers=_AUTH)
         assert resp.status_code == 404
 
     def test_get_app_db_unavailable(self, api_client):
@@ -398,21 +399,22 @@ class TestAppCRUDEdgeCases:
             new_callable=AsyncMock,
             side_effect=StoreUnavailable("no pool"),
         ):
-            resp = api_client.get(f"/api/config/apps/{uuid4()}", headers=_AUTH)
+            resp = api_client.get(f"/api/config/customers/{uuid4()}/apps/{uuid4()}", headers=_AUTH)
         assert resp.status_code == 503
 
     def test_update_app(self, api_client):
-        """PUT /apps/{id} updates an app."""
+        """PUT /customers/{cid}/apps/{id} updates an app."""
         aid = uuid4()
+        cid = uuid4()
         mock = {
-            "id": aid, "customer_id": uuid4(), "name": "Updated",
+            "id": aid, "customer_id": cid, "name": "Updated",
             "origin_url": "http://x:3000", "domain": "x.com",
             "enabled_features": {}, "settings": {},
             "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:00:00Z",
         }
         with patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock):
             resp = api_client.put(
-                f"/api/config/apps/{aid}",
+                f"/api/config/customers/{cid}/apps/{aid}",
                 json={"name": "Updated"},
                 headers=_AUTH,
             )
@@ -421,7 +423,7 @@ class TestAppCRUDEdgeCases:
     def test_update_app_not_found(self, api_client):
         with patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=None):
             resp = api_client.put(
-                f"/api/config/apps/{uuid4()}",
+                f"/api/config/customers/{uuid4()}/apps/{uuid4()}",
                 json={"name": "X"},
                 headers=_AUTH,
             )
@@ -435,7 +437,7 @@ class TestAppCRUDEdgeCases:
             side_effect=ValueError("Invalid column name: evil"),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{uuid4()}",
+                f"/api/config/customers/{uuid4()}/apps/{uuid4()}",
                 json={"name": "X"},
                 headers=_AUTH,
             )
@@ -443,7 +445,7 @@ class TestAppCRUDEdgeCases:
 
     def test_delete_app_not_found(self, api_client):
         with patch("proxy.api.config_routes.pg_store.delete_app", new_callable=AsyncMock, return_value=False):
-            resp = api_client.delete(f"/api/config/apps/{uuid4()}", headers=_AUTH)
+            resp = api_client.delete(f"/api/config/customers/{uuid4()}/apps/{uuid4()}", headers=_AUTH)
         assert resp.status_code == 404
 
     def test_create_app_db_unavailable(self, api_client):
@@ -491,7 +493,7 @@ class TestAppCRUDEdgeCases:
     def test_update_app_ssrf_blocked(self, api_client):
         """Returns 422 when updating origin_url to a private IP."""
         resp = api_client.put(
-            f"/api/config/apps/{uuid4()}",
+            f"/api/config/customers/{uuid4()}/apps/{uuid4()}",
             json={"origin_url": "http://10.0.0.1:3000"},
             headers=_AUTH,
         )
@@ -503,6 +505,7 @@ class TestRateLimitsEndpoint:
 
     def test_update_rate_limits(self, api_client):
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": aid, "settings": {}, "enabled_features": {}}
         mock_updated = {**mock_app, "settings": {"rate_limits": {"auth_max": 100}}}
         with (
@@ -510,7 +513,7 @@ class TestRateLimitsEndpoint:
             patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}/rate-limits",
+                f"/api/config/customers/{cid}/apps/{aid}/rate-limits",
                 json={"auth_max": 100},
                 headers=_AUTH,
             )
@@ -519,7 +522,7 @@ class TestRateLimitsEndpoint:
     def test_update_rate_limits_app_not_found(self, api_client):
         with patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=None):
             resp = api_client.put(
-                f"/api/config/apps/{uuid4()}/rate-limits",
+                f"/api/config/customers/{uuid4()}/apps/{uuid4()}/rate-limits",
                 json={"auth_max": 100},
                 headers=_AUTH,
             )
@@ -527,7 +530,7 @@ class TestRateLimitsEndpoint:
 
     def test_update_rate_limits_rejects_negative(self, api_client):
         resp = api_client.put(
-            f"/api/config/apps/{uuid4()}/rate-limits",
+            f"/api/config/customers/{uuid4()}/apps/{uuid4()}/rate-limits",
             json={"auth_max": -1},
             headers=_AUTH,
         )
@@ -535,7 +538,7 @@ class TestRateLimitsEndpoint:
 
     def test_update_rate_limits_rejects_zero(self, api_client):
         resp = api_client.put(
-            f"/api/config/apps/{uuid4()}/rate-limits",
+            f"/api/config/customers/{uuid4()}/apps/{uuid4()}/rate-limits",
             json={"auth_max": 0},
             headers=_AUTH,
         )
@@ -544,6 +547,7 @@ class TestRateLimitsEndpoint:
     def test_update_rate_limits_partial_update(self, api_client):
         """Only auth_max, not global_max — should merge into existing."""
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": aid, "settings": {"rate_limits": {"global_max": 500}}}
         mock_updated = {**mock_app, "settings": {"rate_limits": {"global_max": 500, "auth_max": 100}}}
         mock_update_app = AsyncMock(return_value=mock_updated)
@@ -552,7 +556,7 @@ class TestRateLimitsEndpoint:
             patch("proxy.api.config_routes.pg_store.update_app", mock_update_app),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}/rate-limits",
+                f"/api/config/customers/{cid}/apps/{aid}/rate-limits",
                 json={"auth_max": 100},
                 headers=_AUTH,
             )
@@ -573,7 +577,7 @@ class TestRateLimitsEndpoint:
             side_effect=StoreUnavailable("no pool"),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{uuid4()}/rate-limits",
+                f"/api/config/customers/{uuid4()}/apps/{uuid4()}/rate-limits",
                 json={"auth_max": 100},
                 headers=_AUTH,
             )
@@ -582,6 +586,7 @@ class TestRateLimitsEndpoint:
     def test_update_rate_limits_empty_body(self, api_client):
         """Empty body is a no-op update."""
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": aid, "settings": {}}
         mock_updated = {**mock_app}
         with (
@@ -589,7 +594,7 @@ class TestRateLimitsEndpoint:
             patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}/rate-limits",
+                f"/api/config/customers/{cid}/apps/{aid}/rate-limits",
                 json={},
                 headers=_AUTH,
             )
@@ -601,6 +606,7 @@ class TestHeaderSettingsEndpoint:
 
     def test_update_header_settings(self, api_client):
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": aid, "settings": {}}
         mock_updated = {**mock_app, "settings": {"header_preset": "strict"}}
         with (
@@ -608,7 +614,7 @@ class TestHeaderSettingsEndpoint:
             patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}/headers",
+                f"/api/config/customers/{cid}/apps/{aid}/headers",
                 json={"header_preset": "strict"},
                 headers=_AUTH,
             )
@@ -616,7 +622,7 @@ class TestHeaderSettingsEndpoint:
 
     def test_update_headers_invalid_preset(self, api_client):
         resp = api_client.put(
-            f"/api/config/apps/{uuid4()}/headers",
+            f"/api/config/customers/{uuid4()}/apps/{uuid4()}/headers",
             json={"header_preset": "invalid"},
             headers=_AUTH,
         )
@@ -625,7 +631,7 @@ class TestHeaderSettingsEndpoint:
     def test_update_headers_app_not_found(self, api_client):
         with patch("proxy.api.config_routes.pg_store.get_app", new_callable=AsyncMock, return_value=None):
             resp = api_client.put(
-                f"/api/config/apps/{uuid4()}/headers",
+                f"/api/config/customers/{uuid4()}/apps/{uuid4()}/headers",
                 json={"header_preset": "strict"},
                 headers=_AUTH,
             )
@@ -634,6 +640,7 @@ class TestHeaderSettingsEndpoint:
     def test_update_headers_csp_override(self, api_client):
         """Setting csp_override should update settings."""
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": aid, "settings": {}}
         mock_updated = {**mock_app, "settings": {"csp_override": "script-src https://cdn.example.com"}}
         with (
@@ -641,7 +648,7 @@ class TestHeaderSettingsEndpoint:
             patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}/headers",
+                f"/api/config/customers/{cid}/apps/{aid}/headers",
                 json={"csp_override": "script-src https://cdn.example.com"},
                 headers=_AUTH,
             )
@@ -650,6 +657,7 @@ class TestHeaderSettingsEndpoint:
     def test_update_headers_both_preset_and_csp(self, api_client):
         """Setting both header_preset and csp_override together."""
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": aid, "settings": {}}
         mock_updated = {**mock_app, "settings": {"header_preset": "strict", "csp_override": "script-src https://x.com"}}
         with (
@@ -657,7 +665,7 @@ class TestHeaderSettingsEndpoint:
             patch("proxy.api.config_routes.pg_store.update_app", new_callable=AsyncMock, return_value=mock_updated),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}/headers",
+                f"/api/config/customers/{cid}/apps/{aid}/headers",
                 json={"header_preset": "strict", "csp_override": "script-src https://x.com"},
                 headers=_AUTH,
             )
@@ -673,7 +681,7 @@ class TestHeaderSettingsEndpoint:
             side_effect=StoreUnavailable("no pool"),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{uuid4()}/headers",
+                f"/api/config/customers/{uuid4()}/apps/{uuid4()}/headers",
                 json={"header_preset": "strict"},
                 headers=_AUTH,
             )
@@ -682,6 +690,7 @@ class TestHeaderSettingsEndpoint:
     def test_update_headers_preserves_existing_settings(self, api_client):
         """Updating headers should not clobber existing settings."""
         aid = uuid4()
+        cid = uuid4()
         mock_app = {"id": aid, "settings": {"rate_limits": {"auth_max": 100}}}
         mock_updated = {**mock_app, "settings": {"rate_limits": {"auth_max": 100}, "header_preset": "strict"}}
         mock_update_app = AsyncMock(return_value=mock_updated)
@@ -690,7 +699,7 @@ class TestHeaderSettingsEndpoint:
             patch("proxy.api.config_routes.pg_store.update_app", mock_update_app),
         ):
             resp = api_client.put(
-                f"/api/config/apps/{aid}/headers",
+                f"/api/config/customers/{cid}/apps/{aid}/headers",
                 json={"header_preset": "strict"},
                 headers=_AUTH,
             )
