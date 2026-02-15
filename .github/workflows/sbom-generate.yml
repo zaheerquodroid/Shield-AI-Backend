@@ -1,0 +1,52 @@
+name: SBOM Generation
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  security-events: write
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Run ShieldAI Security Scan with SBOM
+        id: scan
+        uses: ./github-actions/security-scan
+        with:
+          severity-threshold: "high"
+          python-enabled: "true"
+          javascript-enabled: "false"
+          go-enabled: "false"
+          gitleaks-enabled: "true"
+          trivy-enabled: "true"
+          trivy-scan-type: "fs"
+          sarif-upload: "true"
+          fail-on-findings: "false"
+          sbom-enabled: "true"
+          sbom-python: "true"
+          sbom-javascript: "false"
+          sbom-go: "false"
+
+      - name: Upload SBOM to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SBOM_FILE="${{ steps.scan.outputs.sbom-file }}"
+          if [ -f "${SBOM_FILE}" ]; then
+            gh release upload "${{ github.event.release.tag_name }}" \
+              "${SBOM_FILE}#shieldai-sbom.cdx.json" \
+              --clobber
+          fi
