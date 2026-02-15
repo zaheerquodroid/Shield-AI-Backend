@@ -214,6 +214,15 @@ def load_sarif_files(results_dir: str) -> list[dict]:
             )
             break
 
+        # Reject symlinks — prevents attacker planting symlinks to read
+        # arbitrary files or bypass size checks (TOCTOU via symlink swap)
+        if sarif_file.is_symlink():
+            print(
+                f"::warning::Skipping {sarif_file.name}: symlinks not allowed",
+                file=sys.stderr,
+            )
+            continue
+
         # Size check
         if sarif_file.stat().st_size > MAX_SARIF_SIZE:
             print(
@@ -224,8 +233,12 @@ def load_sarif_files(results_dir: str) -> list[dict]:
 
         try:
             with open(sarif_file) as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+                raw = f.read()
+            # Strip UTF-8 BOM — Windows editors add it, json.loads rejects it
+            if raw.startswith("\ufeff"):
+                raw = raw[1:]
+            data = json.loads(raw)
+        except (json.JSONDecodeError, OSError, RecursionError):
             print(
                 f"::warning::Skipping {sarif_file.name}: invalid JSON",
                 file=sys.stderr,

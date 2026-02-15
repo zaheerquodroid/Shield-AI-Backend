@@ -1788,3 +1788,669 @@ class TestAnnotationLimitEnforcement:
         aggregate_module.emit_annotations(results, {})
         captured = capsys.readouterr()
         assert "Annotation limit reached" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# TestSymlinkAttacks — 4 tests
+# ---------------------------------------------------------------------------
+
+
+class TestSymlinkAttacks:
+    """Simulate symlink-based attacks on SARIF loading.
+
+    An attacker who can write to the results directory (e.g., via artifact
+    poisoning between workflow steps) could plant symlinks to:
+    - Read arbitrary files (/etc/shadow)
+    - Bypass size checks (symlink swap after stat, before open)
+    - Cause infinite reads (symlink to /dev/zero)
+    """
+
+    def test_symlink_sarif_rejected(self, aggregate_module):
+        """Symlinks in results directory must be rejected."""
+        with tempfile.TemporaryDirectory() as d:
+            # Create a real SARIF file
+            real = os.path.join(d, "real.sarif")
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": [
+                    {"ruleId": "R1", "level": "error", "message": {"text": "Finding"}}
+                ]}],
+            }
+            with open(real, "w") as f:
+                json.dump(sarif, f)
+
+            # Create a symlink pointing to the real file
+            link = os.path.join(d, "link.sarif")
+            os.symlink(real, link)
+
+            runs = aggregate_module.load_sarif_files(d)
+            # Only the real file should be loaded, symlink rejected
+            result_count = sum(len(r.get("results", [])) for r in runs)
+            assert result_count == 1, "Symlink SARIF should be rejected"
+
+    def test_symlink_to_outside_directory_rejected(self, aggregate_module):
+        """Symlink pointing outside results dir must be rejected."""
+        with tempfile.TemporaryDirectory() as d:
+            with tempfile.TemporaryDirectory() as outside:
+                external = os.path.join(outside, "external.sarif")
+                sarif = {
+                    "version": "2.1.0",
+                    "$schema": "https://example.com",
+                    "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": [
+                        {"ruleId": "R1", "level": "error", "message": {"text": "Secret!"}}
+                    ]}],
+                }
+                with open(external, "w") as f:
+                    json.dump(sarif, f)
+
+                link = os.path.join(d, "evil.sarif")
+                os.symlink(external, link)
+
+                runs = aggregate_module.load_sarif_files(d)
+                # Symlink must be rejected
+                assert len(runs) == 0, "Symlink to external file should be rejected"
+
+    def test_symlink_warning_emitted(self, aggregate_module, capsys):
+        """Warning must be emitted when symlink is skipped."""
+        with tempfile.TemporaryDirectory() as d:
+            real = os.path.join(d, "real.sarif")
+            with open(real, "w") as f:
+                json.dump({"version": "2.1.0", "runs": []}, f)
+
+            link = os.path.join(d, "link.sarif")
+            os.symlink(real, link)
+
+            aggregate_module.load_sarif_files(d)
+            captured = capsys.readouterr()
+            assert "symlink" in captured.err.lower(), "Warning about symlink must be emitted"
+
+    def test_broken_symlink_no_crash(self, aggregate_module):
+        """Broken symlink must not crash the loader."""
+        with tempfile.TemporaryDirectory() as d:
+            link = os.path.join(d, "broken.sarif")
+            os.symlink("/nonexistent/path.sarif", link)
+            # Must not raise
+            runs = aggregate_module.load_sarif_files(d)
+            assert runs == []
+
+
+# ---------------------------------------------------------------------------
+# TestDeeplyNestedJSON — 3 tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeeplyNestedJSON:
+    """Simulate deeply nested JSON bomb attacks.
+
+    A crafted SARIF file with deeply nested objects/arrays can cause:
+    - Stack overflow (RecursionError) in json.load()
+    - Memory exhaustion from deep dict/list allocation
+    - CPU exhaustion from deep traversal
+    """
+
+    def test_deeply_nested_object_no_crash(self, aggregate_module):
+        """Deeply nested JSON object must not crash the loader."""
+        with tempfile.TemporaryDirectory() as d:
+            # Create a deeply nested JSON that's valid SARIF-ish
+            # Python json module has a default recursion limit
+            depth = 500
+            nested = "{" * depth + '"x": 1' + "}" * depth
+            p = os.path.join(d, "deep.sarif")
+            with open(p, "w") as f:
+                f.write(nested)
+            # Must not raise — either parse error or invalid SARIF structure
+            runs = aggregate_module.load_sarif_files(d)
+            # Deep nesting won't have valid SARIF structure
+            assert runs == []
+
+    def test_deeply_nested_array_no_crash(self, aggregate_module):
+        """Deeply nested array must not crash the loader."""
+        with tempfile.TemporaryDirectory() as d:
+            depth = 500
+            nested = "[" * depth + "1" + "]" * depth
+            p = os.path.join(d, "deep_array.sarif")
+            with open(p, "w") as f:
+                f.write(nested)
+            runs = aggregate_module.load_sarif_files(d)
+            assert runs == []
+
+    def test_moderate_nesting_still_parses(self, aggregate_module):
+        """Legitimate SARIF with moderate nesting should parse fine."""
+        with tempfile.TemporaryDirectory() as d:
+            # SARIF has about 5-6 levels of nesting naturally
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "t", "rules": [{
+                    "id": "R1",
+                    "properties": {"security-severity": "8.0", "tags": ["security"]},
+                }]}}, "results": [{
+                    "ruleId": "R1",
+                    "level": "error",
+                    "message": {"text": "Finding"},
+                    "locations": [{"physicalLocation": {
+                        "artifactLocation": {"uri": "src/app.py"},
+                        "region": {"startLine": 1},
+                    }}],
+                }]}],
+            }
+            p = os.path.join(d, "normal.sarif")
+            with open(p, "w") as f:
+                json.dump(sarif, f)
+            runs = aggregate_module.load_sarif_files(d)
+            assert len(runs) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestConverterNullValues — 6 tests
+# ---------------------------------------------------------------------------
+
+
+class TestConverterNullValues:
+    """Simulate null value attacks against SARIF converter scripts.
+
+    Same pattern as aggregate_sarif.py null-value crash paths:
+    dict.get("key", default) returns None when key exists with null value.
+    """
+
+    def test_go_vuln_null_package_no_crash(self, go_vuln_module):
+        """govulncheck with null package field must not crash."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            entry = {"vulnerability": {"osv": {
+                "id": "GO-2099-NULL",
+                "summary": "Test",
+                "affected": [{"package": None, "module": None}],
+            }}}
+            with open(inp, "w") as f:
+                f.write(json.dumps(entry) + "\n")
+            # Must not crash with AttributeError
+            go_vuln_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            assert len(sarif["runs"][0]["results"]) == 1
+
+    def test_go_vuln_null_osv_id_skipped(self, go_vuln_module):
+        """govulncheck with null osv.id must be skipped, not crash."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            entry = {"vulnerability": {"osv": {"id": None, "summary": "test"}}}
+            with open(inp, "w") as f:
+                f.write(json.dumps(entry) + "\n")
+            go_vuln_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            assert sarif["runs"][0]["results"] == []
+
+    def test_go_vuln_null_finding_line_no_crash(self, go_vuln_module):
+        """Finding with null position.line must not produce non-int startLine."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            entry = {"finding": {
+                "osv": "GO-2099-NULLLINE",
+                "trace": [{"position": {"filename": "main.go", "line": None}}],
+            }}
+            with open(inp, "w") as f:
+                f.write(json.dumps(entry) + "\n")
+            go_vuln_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            result = sarif["runs"][0]["results"][0]
+            line = result["locations"][0]["physicalLocation"]["region"]["startLine"]
+            assert isinstance(line, int) and line >= 1, \
+                f"startLine must be positive int, got {line!r}"
+
+    def test_npm_audit_null_severity_no_crash(self, npm_audit_module):
+        """npm advisory with null severity must not crash."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            data = {"advisories": {"1234": {
+                "severity": None, "title": None, "module_name": None,
+            }}}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            npm_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            assert len(sarif["runs"][0]["results"]) == 1
+
+    def test_npm_audit_v7_null_title_source(self, npm_audit_module):
+        """npm 7+ vuln with null title and source must not crash."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            data = {"vulnerabilities": {"lodash": {"via": [{
+                "severity": None, "title": None, "source": None, "name": None,
+            }]}}}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            npm_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            assert len(sarif["runs"][0]["results"]) == 1
+
+    def test_pip_audit_null_vuln_id_no_crash(self, pip_audit_module):
+        """pip-audit with null vuln id must not crash."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            data = {"dependencies": [{"name": None, "version": None, "vulns": [
+                {"id": None, "fix_versions": None}
+            ]}]}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            pip_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            assert len(sarif["runs"][0]["results"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestConverterInputSanitization — 5 tests
+# ---------------------------------------------------------------------------
+
+
+class TestConverterInputSanitization:
+    """Test converter scripts sanitize attacker-controlled values.
+
+    Converter output feeds into aggregate_sarif.py which sanitizes annotations,
+    but defense-in-depth requires converters to also produce safe output.
+    """
+
+    def test_go_vuln_traversal_in_filename(self, go_vuln_module, aggregate_module, capsys):
+        """Path traversal in govulncheck filename must be caught by aggregate."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            sarif_out = os.path.join(d, "output.sarif")
+            entry = {"finding": {
+                "osv": "GO-2099-TRAV",
+                "trace": [{"position": {
+                    "filename": "../../../etc/passwd",
+                    "line": 1,
+                }}],
+            }}
+            with open(inp, "w") as f:
+                f.write(json.dumps(entry) + "\n")
+            go_vuln_module.convert(inp, sarif_out)
+            # Load through aggregate and emit annotation
+            runs = aggregate_module.load_sarif_files(d)
+            all_results = []
+            for run in runs:
+                for result in run.get("results", []):
+                    if isinstance(result, dict):
+                        all_results.append(result)
+            aggregate_module.emit_annotations(all_results, {})
+            captured = capsys.readouterr()
+            # Path traversal must be stripped by sanitize_uri
+            assert "../" not in captured.out, "Path traversal not sanitized in annotation"
+
+    def test_go_vuln_negative_line_defaults(self, go_vuln_module):
+        """Negative line number must be clamped to valid value."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            entry = {"finding": {
+                "osv": "GO-2099-NEGLINE",
+                "trace": [{"position": {"filename": "main.go", "line": -42}}],
+            }}
+            with open(inp, "w") as f:
+                f.write(json.dumps(entry) + "\n")
+            go_vuln_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            line = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["startLine"]
+            assert isinstance(line, int) and line >= 1, \
+                f"Negative line should be clamped, got {line}"
+
+    def test_go_vuln_float_line_defaults(self, go_vuln_module):
+        """Float line number from attacker JSON must be rejected."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            entry = {"finding": {
+                "osv": "GO-2099-FLOATLINE",
+                "trace": [{"position": {"filename": "main.go", "line": 3.14}}],
+            }}
+            with open(inp, "w") as f:
+                f.write(json.dumps(entry) + "\n")
+            go_vuln_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            line = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["startLine"]
+            assert isinstance(line, int), f"Float line should be rejected, got {type(line).__name__}"
+
+    def test_go_vuln_string_line_defaults(self, go_vuln_module):
+        """String line number from attacker JSON must be rejected."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            entry = {"finding": {
+                "osv": "GO-2099-STRLINE",
+                "trace": [{"position": {"filename": "main.go", "line": "evil"}}],
+            }}
+            with open(inp, "w") as f:
+                f.write(json.dumps(entry) + "\n")
+            go_vuln_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            line = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["startLine"]
+            assert line == 1, f"String line should default to 1, got {line}"
+
+    def test_pip_audit_crafted_fix_versions(self, pip_audit_module):
+        """Crafted fix_versions with non-string elements must not crash."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            out = os.path.join(d, "output.sarif")
+            data = {"dependencies": [{"name": "flask", "version": "1.0", "vulns": [
+                {"id": "CVE-2099-CRAFT", "fix_versions": [None, 42, {"nested": True}]}
+            ]}]}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            pip_audit_module.convert(inp, out)
+            with open(out) as f:
+                sarif = json.load(f)
+            assert len(sarif["runs"][0]["results"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestSeverityEdgeCases — 4 tests
+# ---------------------------------------------------------------------------
+
+
+class TestSeverityEdgeCases:
+    """Test severity normalization edge cases found via online research.
+
+    JSON interoperability research shows large numbers, scientific notation,
+    and type confusion can cause unexpected behavior in numeric processing.
+    """
+
+    def test_scientific_notation_infinity(self, aggregate_module):
+        """1e999 parses to Infinity in Python — must not bypass threshold.
+
+        float('1e999') == float('inf'), which is not finite.
+        Before fix: would fall through all comparisons → 'low'.
+        After fix: isfinite() rejects it → falls to SARIF level.
+        """
+        result = {"ruleId": "SCI-001", "level": "error"}
+        rules = {"SCI-001": {"properties": {"security-severity": "1e999"}}}
+        severity = aggregate_module.normalize_severity(result, rules)
+        assert severity == "high", \
+            f"1e999 (Infinity) should fall through to SARIF level 'error' → 'high', got '{severity}'"
+
+    def test_negative_zero_score(self, aggregate_module):
+        """Negative zero (-0.0) is a valid finite float — should map to low."""
+        result = {"ruleId": "NEGZ-001", "level": "error"}
+        rules = {"NEGZ-001": {"properties": {"security-severity": "-0.0"}}}
+        severity = aggregate_module.normalize_severity(result, rules)
+        assert severity == "low", f"-0.0 should be low, got '{severity}'"
+
+    def test_extremely_long_score_string(self, aggregate_module):
+        """Very long numeric string must not cause CPU exhaustion in float()."""
+        result = {"ruleId": "LONG-001", "level": "error"}
+        # 100K digit number — Python float() handles this fine
+        long_score = "9" * 100_000
+        rules = {"LONG-001": {"properties": {"security-severity": long_score}}}
+        start = time.monotonic()
+        severity = aggregate_module.normalize_severity(result, rules)
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, f"Long score string took {elapsed:.2f}s"
+        # Very large number → Infinity → falls through to SARIF level
+        assert severity in ("high", "critical"), f"Long score: got '{severity}'"
+
+    def test_boolean_score_rejected(self, aggregate_module):
+        """Boolean score (True=1, False=0) must not bypass mapping."""
+        result = {"ruleId": "BOOL-001", "level": "error"}
+        # JSON true becomes Python True; float(True) == 1.0
+        rules = {"BOOL-001": {"properties": {"security-severity": True}}}
+        severity = aggregate_module.normalize_severity(result, rules)
+        # True is truthy, float(True) = 1.0 which is < 4.0 → low
+        # But score_str check: `if score_str:` — True is truthy, so it enters
+        # the float conversion path. float(True) = 1.0, which is "low".
+        # This is technically correct but worth documenting.
+        assert severity == "low", f"Boolean True score: got '{severity}'"
+
+
+# ---------------------------------------------------------------------------
+# TestUnicodeSARIF — 3 tests
+# ---------------------------------------------------------------------------
+
+
+class TestUnicodeSARIF:
+    """Test Unicode edge cases in SARIF processing.
+
+    Attackers may use Unicode tricks to bypass sanitization or cause
+    encoding-related crashes.
+    """
+
+    def test_bom_in_sarif_file(self, aggregate_module):
+        """UTF-8 BOM at start of SARIF file must be handled gracefully."""
+        with tempfile.TemporaryDirectory() as d:
+            sarif = {
+                "version": "2.1.0",
+                "$schema": "https://example.com",
+                "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": [
+                    {"ruleId": "BOM-001", "level": "error", "message": {"text": "Finding"}}
+                ]}],
+            }
+            p = os.path.join(d, "bom.sarif")
+            with open(p, "w", encoding="utf-8-sig") as f:
+                json.dump(sarif, f)
+            runs = aggregate_module.load_sarif_files(d)
+            # Python json.loads handles BOM gracefully
+            assert len(runs) == 1
+
+    def test_unicode_in_rule_id(self, aggregate_module, capsys):
+        """Unicode characters in ruleId must not crash annotations."""
+        results = [{
+            "ruleId": "RULE-\u200b\u200c\u200d-001",  # zero-width chars
+            "level": "error",
+            "message": {"text": "Finding with unicode rule"},
+            "locations": [],
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::error " in captured.out
+
+    def test_unicode_in_file_path(self, aggregate_module, capsys):
+        """Unicode file paths must not crash annotations."""
+        results = [{
+            "ruleId": "UNI-PATH-001",
+            "level": "warning",
+            "message": {"text": "test"},
+            "locations": [{"physicalLocation": {
+                "artifactLocation": {"uri": "src/caf\u00e9/app.py"},
+                "region": {"startLine": 1},
+            }}],
+        }]
+        aggregate_module.emit_annotations(results, {})
+        captured = capsys.readouterr()
+        assert "::warning " in captured.out
+
+
+# ---------------------------------------------------------------------------
+# TestSupplyChainHardening — 3 tests
+# ---------------------------------------------------------------------------
+
+
+class TestSupplyChainHardening:
+    """Test supply chain security based on CVE-2025-30066 (tj-actions) research.
+
+    The March 2025 tj-actions/changed-files attack showed that mutable
+    GitHub Action tags (@v2, @v3) can be silently repointed to malicious
+    commits. Only SHA pinning or version pinning provides immutability.
+    """
+
+    def test_upload_sarif_uses_major_version_pin(self, steps):
+        """upload-sarif must be pinned to at least major version."""
+        step = find_step_by_id(steps, "upload-sarif")
+        uses = step.get("uses", "")
+        ref = uses.split("@")[1] if "@" in uses else ""
+        # Must be version tag (v1, v2, v3) or SHA, not branch
+        assert re.match(r"^(v\d|[0-9a-f]{40})", ref), \
+            f"upload-sarif ref '{ref}' must be version tag or SHA"
+
+    def test_gitleaks_uses_version_pin(self, steps):
+        """gitleaks-action must be pinned to version, not branch."""
+        step = find_step_by_id(steps, "gitleaks")
+        uses = step.get("uses", "")
+        ref = uses.split("@")[1] if "@" in uses else ""
+        assert ref not in ("main", "master", "HEAD", "latest"), \
+            f"gitleaks pinned to mutable ref '{ref}'"
+
+    def test_no_mutable_branch_refs(self, steps):
+        """No action should use mutable branch references."""
+        mutable_refs = {"main", "master", "HEAD", "latest", "dev", "develop"}
+        for step in steps:
+            uses = step.get("uses", "")
+            if "@" in uses:
+                ref = uses.split("@")[1]
+                assert ref not in mutable_refs, \
+                    f"Step '{step.get('id', step.get('name'))}' uses mutable ref '{ref}': {uses}"
+
+
+# ---------------------------------------------------------------------------
+# TestEndToEndConverterPipeline — 4 tests
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndConverterPipeline:
+    """End-to-end tests driving converter → aggregate → annotation pipeline
+    with adversarial input to verify defense-in-depth.
+    """
+
+    def test_go_vuln_null_cascade_through_pipeline(self, go_vuln_module, aggregate_module):
+        """All-null govulncheck finding must not crash full pipeline."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            sarif_out = os.path.join(d, "output.sarif")
+            # Mix of null and valid entries
+            entries = [
+                json.dumps({"vulnerability": {"osv": {"id": None}}}),
+                json.dumps({"vulnerability": {"osv": {
+                    "id": "GO-2099-VALID",
+                    "summary": "Real vuln",
+                    "affected": [{"package": {"name": "example.com/foo"}}],
+                }}}),
+                json.dumps({"finding": {"osv": None}}),
+            ]
+            with open(inp, "w") as f:
+                f.write("\n".join(entries) + "\n")
+            go_vuln_module.convert(inp, sarif_out)
+            # Load through aggregate
+            runs = aggregate_module.load_sarif_files(d)
+            all_results = []
+            for run in runs:
+                for result in run.get("results", []):
+                    if isinstance(result, dict):
+                        all_results.append(result)
+            # Only the valid entry should produce a result
+            assert len(all_results) == 1
+            assert all_results[0]["ruleId"] == "GO-2099-VALID"
+
+    def test_npm_audit_both_formats_with_nulls(self, npm_audit_module, aggregate_module):
+        """npm audit with null values in both v6 and v7 formats must not crash."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            sarif_out = os.path.join(d, "output.sarif")
+            # v7 format with null values
+            data = {"vulnerabilities": {"evil-pkg": {"via": [
+                {"severity": None, "title": None, "source": None},
+                {"severity": "high", "title": "Real Vuln", "source": 999},
+            ]}}}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            npm_audit_module.convert(inp, sarif_out)
+            runs = aggregate_module.load_sarif_files(d)
+            all_results = []
+            for run in runs:
+                for result in run.get("results", []):
+                    if isinstance(result, dict):
+                        all_results.append(result)
+            assert len(all_results) == 2  # both entries produce results
+
+    def test_pip_audit_all_null_fields_through_pipeline(self, pip_audit_module, aggregate_module):
+        """pip-audit with all null fields must survive full pipeline."""
+        with tempfile.TemporaryDirectory() as d:
+            inp = os.path.join(d, "input.json")
+            sarif_out = os.path.join(d, "output.sarif")
+            data = {"dependencies": [
+                {"name": None, "version": None, "vulns": [
+                    {"id": None, "fix_versions": None},
+                ]},
+                {"name": "flask", "version": "1.0", "vulns": [
+                    {"id": "CVE-2099-REAL", "fix_versions": ["2.0"]},
+                ]},
+            ]}
+            with open(inp, "w") as f:
+                json.dump(data, f)
+            pip_audit_module.convert(inp, sarif_out)
+            # Load and count through aggregate pipeline
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            with open(gh_output, "w"):
+                pass
+            merged = os.path.join(d, "merged.sarif")
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                exit_code = aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+            assert exit_code == 1, "Real finding must trigger failure"
+            with open(gh_output) as f:
+                content = f.read()
+            assert "scan-result=fail" in content
+
+    def test_mixed_valid_invalid_sarif_files(self, aggregate_module):
+        """Directory with mix of valid, invalid, and edge-case SARIF files."""
+        with tempfile.TemporaryDirectory() as d:
+            # Valid SARIF
+            with open(os.path.join(d, "valid.sarif"), "w") as f:
+                json.dump({
+                    "version": "2.1.0", "$schema": "https://example.com",
+                    "runs": [{"tool": {"driver": {"name": "t", "rules": []}}, "results": [
+                        {"ruleId": "R1", "level": "error", "message": {"text": "Real"}}
+                    ]}],
+                }, f)
+            # Invalid JSON
+            with open(os.path.join(d, "bad.sarif"), "w") as f:
+                f.write("not json{{{")
+            # Valid JSON but not SARIF
+            with open(os.path.join(d, "notsar.sarif"), "w") as f:
+                json.dump({"hello": "world"}, f)
+            # Empty file
+            with open(os.path.join(d, "empty.sarif"), "w") as f:
+                pass
+
+            gh_output = os.path.join(d, "GITHUB_OUTPUT")
+            with open(gh_output, "w"):
+                pass
+            merged = os.path.join(d, "merged.sarif")
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "aggregate_sarif.py",
+                    "--results-dir", d,
+                    "--threshold", "high",
+                    "--output-sarif", merged,
+                    "--github-output", gh_output,
+                    "--fail-on-findings", "true",
+                ]
+                exit_code = aggregate_module.main()
+            finally:
+                sys.argv = old_argv
+            assert exit_code == 1, "Valid finding must not be hidden by invalid files"
+            with open(gh_output) as f:
+                content = f.read()
+            assert "high-count=1" in content

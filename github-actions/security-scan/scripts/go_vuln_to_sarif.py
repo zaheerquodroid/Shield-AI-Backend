@@ -70,14 +70,20 @@ def convert(input_path: str, output_path: str) -> None:
         if not vuln_id:
             continue
 
-        summary = osv.get("summary", f"Vulnerability {vuln_id}")
+        summary = osv.get("summary") or f"Vulnerability {vuln_id}"
         affected = osv.get("affected", [])
         module_path = ""
         if isinstance(affected, list) and affected:
             pkg = affected[0] if isinstance(affected[0], dict) else {}
-            module_path = pkg.get("package", {}).get("name", "")
+            # Guard against null values: pkg.get("package", {}) returns None
+            # when "package" key exists with null value
+            pkg_info = pkg.get("package")
+            if isinstance(pkg_info, dict):
+                module_path = pkg_info.get("name") or ""
             if not module_path:
-                module_path = pkg.get("module", {}).get("path", "")
+                mod_info = pkg.get("module")
+                if isinstance(mod_info, dict):
+                    module_path = mod_info.get("path") or ""
 
         if vuln_id not in rule_ids:
             rule_ids.add(vuln_id)
@@ -147,7 +153,7 @@ def _process_finding(
             },
         })
 
-    # Extract trace info for location
+    # Extract trace info for location — validate attacker-controlled values
     trace = finding.get("trace", [])
     file_path = "go.mod"
     line = 1
@@ -156,8 +162,12 @@ def _process_finding(
             if isinstance(frame, dict) and "position" in frame:
                 pos = frame["position"]
                 if isinstance(pos, dict):
-                    file_path = pos.get("filename", file_path)
-                    line = pos.get("line", line)
+                    raw_path = pos.get("filename")
+                    if isinstance(raw_path, str) and raw_path:
+                        file_path = raw_path
+                    raw_line = pos.get("line")
+                    if isinstance(raw_line, int) and raw_line >= 1:
+                        line = raw_line
                     break
 
     results.append({

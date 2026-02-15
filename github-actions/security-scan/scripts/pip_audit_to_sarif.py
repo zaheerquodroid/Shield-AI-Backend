@@ -51,9 +51,9 @@ def convert(input_path: str, output_path: str) -> None:
                     break
                 if not isinstance(vuln, dict):
                     continue
-                vuln_id = vuln.get("id", "UNKNOWN")
-                name = dep.get("name", "unknown")
-                version = dep.get("version", "unknown")
+                vuln_id = vuln.get("id") or "UNKNOWN"
+                name = dep.get("name") or "unknown"
+                version = dep.get("version") or "unknown"
                 fix_versions = vuln.get("fix_versions", [])
                 fix_str = ", ".join(str(v) for v in fix_versions) if isinstance(fix_versions, list) else ""
 

@@ -115,9 +115,9 @@ def _process_advisory(
     rule_ids: set,
 ) -> None:
     """Process an npm 6 advisory into SARIF results and rules."""
-    severity = advisory.get("severity", "moderate")
-    title = advisory.get("title", f"Advisory {adv_id}")
-    module_name = advisory.get("module_name", "unknown")
+    severity = advisory.get("severity") or "moderate"
+    title = advisory.get("title") or f"Advisory {adv_id}"
+    module_name = advisory.get("module_name") or "unknown"
     rule_id = f"npm-advisory-{adv_id}"
 
     if rule_id not in rule_ids:
@@ -153,9 +153,9 @@ def _process_npm7_vuln(
     rule_ids: set,
 ) -> None:
     """Process an npm 7+ vulnerability via entry into SARIF results and rules."""
-    severity = entry.get("severity", "moderate")
-    title = entry.get("title", entry.get("name", f"Vulnerability in {pkg_name}"))
-    source_id = str(entry.get("source", entry.get("url", pkg_name)))
+    severity = entry.get("severity") or "moderate"
+    title = entry.get("title") or entry.get("name") or f"Vulnerability in {pkg_name}"
+    source_id = str(entry.get("source") or entry.get("url") or pkg_name)
     rule_id = f"npm-vuln-{source_id}"
 
     if rule_id not in rule_ids:
