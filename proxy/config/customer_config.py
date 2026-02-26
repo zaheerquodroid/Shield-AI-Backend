@@ -56,12 +56,15 @@ class CustomerConfigService:
             features = app.get("enabled_features", {})
             if isinstance(features, str):
                 features = json.loads(features)
+            settings = app.get("settings", {})
+            if isinstance(settings, str):
+                settings = json.loads(settings)
             new_cache[domain] = {
                 "app_id": str(app["id"]),
                 "customer_id": str(app["customer_id"]),
                 "origin_url": app["origin_url"],
                 "enabled_features": features,
-                "settings": app.get("settings", {}),
+                "settings": settings,
             }
         self._cache = new_cache
         self._cache_time = time.monotonic()

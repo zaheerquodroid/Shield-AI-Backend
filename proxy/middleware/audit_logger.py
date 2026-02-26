@@ -154,7 +154,7 @@ class AuditLogger(Middleware):
         # Always capture request metadata (needed for both audit and webhooks)
         context.extra["_audit_start"] = time.monotonic()
         context.extra["_audit_timestamp"] = datetime.now(timezone.utc)
-        context.extra["_audit_method"] = request.method
+        context.extra["_audit_method"] = getattr(request, "method", "WS")
         context.extra["_audit_path"] = _sanitize(
             request.url.path, _MAX_PATH_LENGTH
         )

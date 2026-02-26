@@ -106,7 +106,14 @@ def validate_origin_url(url: str, *, strict_dns: bool = False) -> str | None:
     When strict_dns=True (recommended for webhooks), DNS resolution failure
     is treated as an error (fail-closed). When False (default, for origin
     URLs), DNS failure is allowed since upstream will fail naturally.
+
+    When PROXY_SSRF_ALLOW_PRIVATE=true, private IP checks are skipped
+    (for local development with Docker networking).
     """
+    from proxy.config.loader import get_settings
+
+    if get_settings().ssrf_allow_private:
+        return None
     # Reject null bytes — prevents truncation attacks where
     # "evil.com%00.allowed.com" is parsed differently by URL lib vs DNS.
     if "\x00" in url or "%00" in url.lower():

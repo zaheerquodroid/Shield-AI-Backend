@@ -218,6 +218,10 @@ class LLMSanitizer(Middleware):
     """
 
     async def process_request(self, request: Request, context: RequestContext) -> Request | Response | None:
+        # Skip WebSocket upgrade requests (frame-level sanitization handled separately)
+        if context.extra.get("is_websocket"):
+            return None
+
         # Check feature flag
         features = context.customer_config.get("enabled_features", {})
         if not features.get("llm_sanitizer", True):

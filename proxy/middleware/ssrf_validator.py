@@ -70,6 +70,10 @@ class SSRFValidator(Middleware):
         if not any(fnmatch.fnmatch(path, p) for p in protected_endpoints):
             return None
 
+        # Skip WebSocket upgrade requests (no body to scan)
+        if context.extra.get("is_websocket"):
+            return None
+
         # Only scan POST/PUT/PATCH (requests with bodies)
         if request.method.upper() not in ("POST", "PUT", "PATCH"):
             return None

@@ -10,6 +10,7 @@ import httpx
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
+from starlette.websockets import WebSocket
 
 from proxy.config.loader import get_settings, load_settings, register_reload_handler
 from proxy.health import close_health_client, router as health_router
@@ -178,6 +179,26 @@ app.include_router(onboarding_router)
 app.include_router(well_known_router)
 
 
+from proxy.websocket_handler import websocket_proxy  # noqa: E402
+
+
+@app.websocket("/{path:path}")
+async def ws_proxy(websocket: WebSocket, path: str):
+    """Catch-all WebSocket reverse proxy handler."""
+    if _pipeline is None:
+        await websocket.accept()
+        await websocket.close(code=4503, reason="Security pipeline not initialized")
+        return
+
+    settings = get_settings()
+    if not settings.ws_enabled:
+        await websocket.accept()
+        await websocket.close(code=4503, reason="WebSocket proxy disabled")
+        return
+
+    await websocket_proxy(websocket, path, _pipeline)
+
+
 HOP_BY_HOP_HEADERS = frozenset({
     "connection",
     "keep-alive",
@@ -311,11 +332,22 @@ async def proxy_request(request: Request, path: str) -> Response:
         )
         return await _error_response("Upstream response too large", 502, context)
 
-    # Build response headers — filter hop-by-hop
+    # Build response headers — filter hop-by-hop.
+    # Extract Set-Cookie from raw headers because httpx combines duplicate
+    # headers into comma-separated values, which breaks Set-Cookie (RFC 6265
+    # requires each cookie on its own header — commas in expires dates make
+    # comma-folded Set-Cookie unparseable).
     response_headers = {}
-    for key, value in upstream_resp.headers.items():
-        if key.lower() not in HOP_BY_HOP_HEADERS:
-            response_headers[key] = value
+    set_cookie_headers: list[str] = []
+    for raw_name, raw_value in upstream_resp.headers.raw:
+        name = raw_name.decode("latin-1").lower()
+        value = raw_value.decode("latin-1")
+        if name in HOP_BY_HOP_HEADERS:
+            continue
+        if name == "set-cookie":
+            set_cookie_headers.append(value)
+        else:
+            response_headers[name] = value
 
     # Always include request ID in response
     response_headers["x-request-id"] = context.request_id
@@ -328,5 +360,11 @@ async def proxy_request(request: Request, path: str) -> Response:
 
     # Run response through middleware pipeline (reverse order)
     response = await _pipeline.process_response(response, context)
+
+    # Append Set-Cookie headers AFTER pipeline to prevent middleware from
+    # combining them into a single header. Set-Cookie must be separate
+    # headers per RFC 6265 (comma-folding breaks cookie parsing).
+    for cookie_value in set_cookie_headers:
+        response.headers.append("set-cookie", cookie_value)
 
     return response

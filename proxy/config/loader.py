@@ -89,6 +89,17 @@ class ProxySettings(BaseSettings):
     # Row-Level Security
     rls_enabled: bool = True
 
+    # SSRF validation: allow private IPs as origin targets (dev only)
+    ssrf_allow_private: bool = False
+
+    # WebSocket proxy settings
+    ws_enabled: bool = True
+    ws_timeout: float = 30.0
+    ws_max_message_size: int = 1_048_576  # 1MB max frame size
+    ws_ping_interval: float = 30.0
+    ws_ping_timeout: float = 10.0
+    ws_sanitize_paths: list[str] = []  # paths to apply LLM sanitization on frames
+
 _settings: ProxySettings | None = None
 
 

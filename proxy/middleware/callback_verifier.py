@@ -38,6 +38,10 @@ class CallbackVerifier(Middleware):
     async def process_request(
         self, request: Request, context: RequestContext
     ) -> Request | Response | None:
+        # Skip WebSocket upgrade requests (no body to verify)
+        if context.extra.get("is_websocket"):
+            return None
+
         # Check feature flag (default False — opt-in)
         features = context.customer_config.get("enabled_features", {})
         if not features.get("callback_verifier", False):

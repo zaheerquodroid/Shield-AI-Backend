@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.14-slim
 
-RUN groupadd -r proxy && useradd -r -g proxy -d /app -s /sbin/nologin proxy
+RUN groupadd -r proxy 2>/dev/null || true && useradd -r -g proxy -d /app -s /sbin/nologin proxy 2>/dev/null || true
 
 WORKDIR /app
 
