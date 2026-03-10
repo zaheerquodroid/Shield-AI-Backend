@@ -35,6 +35,10 @@ class SessionUpdater(Middleware):
     """
 
     async def process_request(self, request: Request, context: RequestContext) -> Request | Response | None:
+        # WebSocket objects don't have a method attribute — skip
+        if context.extra.get("is_websocket"):
+            return None
+
         # Store request info for use in process_response
         context.extra["path"] = request.url.path
         context.extra["method"] = request.method.upper()

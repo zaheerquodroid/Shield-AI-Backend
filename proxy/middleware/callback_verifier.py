@@ -55,6 +55,10 @@ class CallbackVerifier(Middleware):
         if not endpoints:
             return None
 
+        # Skip WebSocket upgrade requests (no body to verify)
+        if context.extra.get("is_websocket"):
+            return None
+
         # Match request path against endpoint patterns (first match wins)
         path = request.url.path
         matched_endpoint = None

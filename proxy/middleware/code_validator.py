@@ -59,6 +59,10 @@ class CodeValidatorMiddleware(Middleware):
         if not protected_endpoints:
             return None
 
+        # Skip WebSocket upgrade requests (no body to scan)
+        if context.extra.get("is_websocket"):
+            return None
+
         # Only scan POST/PUT/PATCH
         if request.method.upper() not in ("POST", "PUT", "PATCH"):
             return None
